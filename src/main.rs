@@ -3,6 +3,7 @@ mod browser;
 mod errors;
 mod guard;
 mod ignore;
+mod list;
 mod listen;
 mod serve;
 mod watch;
@@ -37,6 +38,10 @@ struct Args {
     /// Serve index.html when the address matches no file, for single-page apps
     #[arg(long)]
     spa: bool,
+
+    /// Do not show file lists, not even with ?list
+    #[arg(long)]
+    no_list: bool,
 
     /// Do not watch for changes, and do not refresh the browser
     #[arg(long)]
@@ -105,6 +110,7 @@ async fn run() -> Result<()> {
     let app = serve::app(
         &static_dir,
         args.spa,
+        !args.no_list,
         args.cache_assets,
         (!args.no_reload).then_some(livereload),
         no_app_page,

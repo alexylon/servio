@@ -1,11 +1,14 @@
 //! What the server refuses to hand out: anything outside the served
 //! directory, and anything hidden.
 
+use crate::serve::INDEX_FILE;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use std::path::{Path, PathBuf};
+use percent_encoding::percent_decode_str;
+use std::borrow::Cow;
+use std::path::{Component, Path, PathBuf};
 
 /// The one hidden directory the web uses.
 const WELL_KNOWN: &str = ".well-known";
@@ -18,30 +21,54 @@ const SEPARATORS: &[char] = &['/', '\\'];
 const SEPARATORS: &[char] = &['/'];
 
 pub(crate) async fn refuse_paths_outside(root: PathBuf, request: Request, next: Next) -> Response {
-    // A link inside the directory can point anywhere on the disk, and the
-    // file service follows it: `/etc/passwd` included.
-    if !leads_inside(&root, request.uri().path()) {
+    // The file service follows links, which can point anywhere: to
+    // `/etc/passwd`, or to a hidden `.env` under an ordinary name.
+    if !may_be_served(&root, &on_disk(&root, request.uri().path())) {
         return StatusCode::NOT_FOUND.into_response();
     }
 
     next.run(request).await
 }
 
-/// True when the address leads inside the served directory, or nowhere at
-/// all — the file service answers for a missing file, and answering here
-/// would only tell a stranger which names exist.
-///
-/// This is one look at the disk, taken here rather than on a thread of its
-/// own: the handoff costs more than the look, and the file service is about
-/// to take several.
-fn leads_inside(root: &Path, path: &str) -> bool {
-    let decoded = decode(path);
-    let relative = decoded.trim_start_matches(SEPARATORS);
-
-    match root.join(relative).canonicalize() {
-        Ok(resolved) => resolved.starts_with(root),
-        Err(_) => true,
+/// For an address ending in `/`, the file service serves the folder's
+/// index.html, which `refuse_paths_outside` never checked. Check it here, just
+/// before it's opened. Only the page is refused: `?list` still works.
+pub(crate) async fn refuse_index_pages_outside(
+    root: PathBuf,
+    request: Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    if path.ends_with('/') && !may_be_served(&root, &on_disk(&root, path).join(INDEX_FILE)) {
+        return StatusCode::NOT_FOUND.into_response();
     }
+
+    next.run(request).await
+}
+
+/// The path on disk for an address, before following any links.
+fn on_disk(root: &Path, path: &str) -> PathBuf {
+    root.join(decode(path).trim_start_matches(SEPARATORS))
+}
+
+/// Whether the server may serve what `path` points to. After following links,
+/// it must be inside the served folder, with nothing hidden on the way. A path
+/// that doesn't exist is allowed, so the file service can answer 404.
+///
+/// This reads the disk on the current thread: one quick lookup isn't worth
+/// handing to another thread.
+pub(crate) fn may_be_served(root: &Path, path: &Path) -> bool {
+    let Ok(resolved) = path.canonicalize() else {
+        return true;
+    };
+    let Ok(below) = resolved.strip_prefix(root) else {
+        return false;
+    };
+
+    !below.components().any(|part| match part {
+        Component::Normal(name) => is_hidden(&name.to_string_lossy()),
+        _ => false,
+    })
 }
 
 pub(crate) async fn refuse_hidden_files(request: Request, next: Next) -> Response {
@@ -67,32 +94,9 @@ fn names_a_hidden_file(path: &str) -> bool {
     decode(path).split(SEPARATORS).any(is_hidden)
 }
 
-/// Turns each `%XX` into the byte it stands for, once, as the file service
-/// does.
-fn decode(path: &str) -> String {
-    let raw = path.as_bytes();
-    let mut decoded = Vec::with_capacity(raw.len());
-    let mut at = 0;
-
-    while at < raw.len() {
-        let pair = (raw.get(at + 1).and_then(hex), raw.get(at + 2).and_then(hex));
-        match (raw[at], pair) {
-            (b'%', (Some(high), Some(low))) => {
-                decoded.push(high << 4 | low);
-                at += 3;
-            }
-            _ => {
-                decoded.push(raw[at]);
-                at += 1;
-            }
-        }
-    }
-
-    String::from_utf8_lossy(&decoded).into_owned()
-}
-
-fn hex(digit: &u8) -> Option<u8> {
-    (*digit as char).to_digit(16).map(|value| value as u8)
+/// Decodes each `%XX` once, as the file service does.
+fn decode(path: &str) -> Cow<'_, str> {
+    percent_decode_str(path).decode_utf8_lossy()
 }
 
 #[cfg(test)]

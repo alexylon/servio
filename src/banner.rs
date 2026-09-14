@@ -42,6 +42,14 @@ pub(crate) fn print(
     }
     row("Single-page app", on_off(args.spa));
     row(
+        "File lists",
+        if args.no_list {
+            "off"
+        } else {
+            "where a folder has no index.html, or with ?list"
+        },
+    );
+    row(
         "Caching",
         if args.cache_assets {
             "files under /assets/ for a year"
@@ -52,7 +60,13 @@ pub(crate) fn print(
     if no_app_page {
         row(
             "Warning",
-            format!("there is no {INDEX_FILE} here, so no page will load"),
+            format!("there is no {INDEX_FILE} here, so the app will not load"),
+        );
+    }
+    if !args.no_list && reachable_from_elsewhere(args.host) {
+        row(
+            "Warning",
+            "other devices can list the files here; --no-list turns that off",
         );
     }
     row("Open", hyperlink(&url, &authority));
@@ -79,6 +93,12 @@ fn authority(bound: SocketAddr) -> String {
     } else {
         bound.to_string()
     }
+}
+
+/// Whether other machines can reach this address. `::ffff:127.0.0.1` counts
+/// as local.
+fn reachable_from_elsewhere(host: IpAddr) -> bool {
+    !host.to_canonical().is_loopback()
 }
 
 fn row(label: &str, value: impl Display) {
@@ -124,6 +144,18 @@ fn hyperlink(url: &str, text: impl Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_loopback_keeps_the_lists_to_this_machine() {
+        for local in ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"] {
+            let host: IpAddr = local.parse().unwrap();
+            assert!(!reachable_from_elsewhere(host), "{local}");
+        }
+        for open in ["0.0.0.0", "::", "192.168.1.20", "::ffff:192.168.1.20"] {
+            let host: IpAddr = open.parse().unwrap();
+            assert!(reachable_from_elsewhere(host), "{open}");
+        }
+    }
 
     #[test]
     fn what_is_ignored_is_listed_and_the_file_is_counted() {

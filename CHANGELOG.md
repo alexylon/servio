@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+- A folder with no `index.html` shows the files in it, and `?list` added to any
+  folder's address shows them where it has one. Folders come first, a folder's
+  link on a list asked for keeps `?list`, and hidden files, and links leading
+  out of the served directory or to anything hidden, are left off, since none
+  of them is ever served
+- `--no-list` turns the lists off, for a site other devices can reach. The
+  banner warns when other devices can reach the server and the lists are on
+
+### Fixed
+- With `--cache-assets`, a page at a folder's own address under `/assets/`,
+  such as `/assets/docs/`, was kept for a year, though a folder's name carries
+  no hash
+
+### Changed
+- A folder with no `index.html` answers with the list of its files rather than
+  404, unless `--no-list` is given. With `--spa`, a browser opening one still
+  gets the app
+
+### Security
+- An address starting with `//` that named a served folder, such as
+  `//example.com` with a folder of that name, was redirected to
+  `//example.com/`, which a browser follows to that site. Slashes in front of
+  an address, and backslashes among them, now count as one
+- A folder's address answered with its `index.html` even when that was a link
+  leading out of the served directory, though the same file asked for by name
+  was refused; with `--spa`, so did every route of the app. Both are refused
+  now
+- A link inside the served directory to a hidden file or folder, such as
+  `docs` leading to `.git`, handed out what it led to, since only the address
+  was checked for hidden names. Where a link leads is now checked as well
+
 ## [0.6.2] - 2026-09-04
 
 ### Fixed

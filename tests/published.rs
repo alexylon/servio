@@ -48,6 +48,18 @@ fn a_file_that_is_not_there_is_never_kept() {
 }
 
 #[test]
+fn a_page_at_a_folders_own_address_under_assets_is_not_kept() {
+    // Only file names carry a hash; the page at a folder's address can change.
+    let dir = site("folder-page");
+    dir.write("assets/docs/index.html", "<html>docs</html>");
+    let server = Server::start(dir.path(), &["--cache-assets"]);
+
+    let response = get(server.port, "/assets/docs/");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.header("cache-control"), Some("no-cache"));
+}
+
+#[test]
 fn a_missing_asset_is_never_answered_with_the_app() {
     // Nothing under /assets/ is a route: those names carry a hash of the
     // file's contents. Answering with the app page there would leave the
@@ -153,6 +165,7 @@ fn a_published_site_still_refuses_hidden_files_and_serves_its_routes() {
         &[
             "--spa",
             "--no-reload",
+            "--no-list",
             "--cache-assets",
             "--host",
             "0.0.0.0",

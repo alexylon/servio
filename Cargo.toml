@@ -33,6 +33,9 @@ file-id = "0.2"
 open = "5"
 # Reads the patterns given to --ignore.
 globset = "0.4"
+# Decodes addresses and encodes links as the file service does; tower-http
+# already uses it.
+percent-encoding = "2"
 
 [profile.release]
 lto = true

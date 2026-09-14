@@ -145,7 +145,7 @@ fn says_so_when_there_is_no_index_to_fall_back_on() {
 
     // The banner already said it; the first request should not say it again.
     server.settle();
-    assert_eq!(server.count("no page will load"), 1, "said twice");
+    assert_eq!(server.count("the app will not load"), 1, "said twice");
 }
 
 /// A page that is there but closed to this program is no more use than one
@@ -177,7 +177,7 @@ fn a_page_that_cannot_be_read_is_reported_once_like_a_missing_one() {
 
     server.settle();
     assert_eq!(
-        server.count("no page will load"),
+        server.count("the app will not load"),
         1,
         "said for each address"
     );
@@ -193,7 +193,7 @@ fn says_so_each_time_the_app_page_goes_missing() {
 
     std::fs::remove_file(&page).expect("could not remove the page");
     assert_eq!(get_page(server.port, "/users/123").status, 404);
-    server.wait_for_count("no page will load", 1);
+    server.wait_for_count("the app will not load", 1);
 
     // A build clearing the directory takes the page away for a moment. That
     // must not use up the warning the real outage needs — and the page counts
@@ -203,14 +203,53 @@ fn says_so_each_time_the_app_page_goes_missing() {
 
     std::fs::remove_file(&page).expect("could not remove the page");
     assert_eq!(get_page(server.port, "/users/456").status, 404);
-    server.wait_for_count("no page will load", 2);
+    server.wait_for_count("the app will not load", 2);
 
     // Still once for each time it goes, not once for each address.
     assert_eq!(get_page(server.port, "/users/789").status, 404);
     server.settle();
     assert_eq!(
-        server.count("no page will load"),
+        server.count("the app will not load"),
         2,
         "said for each address"
     );
+}
+
+/// Creating links on Windows needs extra permissions, so this is Unix only.
+#[cfg(unix)]
+#[test]
+fn an_app_page_leading_out_of_the_directory_is_never_served() {
+    let dir = TempDir::new("app-link-out");
+    let elsewhere = TempDir::new("app-link-target");
+    elsewhere.write("secret.html", "SECRET");
+    std::os::unix::fs::symlink(elsewhere.join("secret.html"), dir.join("index.html"))
+        .expect("could not make the link");
+
+    let server = Server::start(dir.path(), &["--spa", "--no-reload"]);
+
+    for address in ["/", "/users/123"] {
+        let response = get_page(server.port, address);
+        assert_eq!(response.status, 404, "for {address}");
+        assert!(!response.text().contains("SECRET"), "for {address}");
+    }
+    server.wait_for("leads to a file that is never served");
+}
+
+/// Creating links on Windows needs extra permissions, so this is Unix only.
+#[cfg(unix)]
+#[test]
+fn an_app_page_linked_from_inside_the_directory_is_served() {
+    // Only links leading out are refused; a build may link its page in place.
+    let dir = TempDir::new("app-link-in");
+    dir.write("build/app.html", "<html>the app</html>");
+    std::os::unix::fs::symlink(dir.join("build/app.html"), dir.join("index.html"))
+        .expect("could not make the link");
+
+    let server = Server::start(dir.path(), &["--spa", "--no-reload"]);
+
+    for address in ["/", "/users/123"] {
+        let response = get_page(server.port, address);
+        assert_eq!(response.status, 200, "for {address}");
+        assert!(response.text().contains("the app"), "for {address}");
+    }
 }

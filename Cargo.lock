@@ -853,6 +853,7 @@ dependencies = [
  "http",
  "notify-debouncer-full",
  "open",
+ "percent-encoding",
  "tokio",
  "tower-http",
  "tower-livereload",

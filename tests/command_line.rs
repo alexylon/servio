@@ -163,6 +163,35 @@ fn says_what_it_is_doing_on_the_way_up() {
     assert!(server.said("Serving"));
     assert!(server.said("Live reload"));
     assert!(server.said("Single-page app"));
+    assert!(server.said("File lists"));
+}
+
+#[test]
+fn warns_when_other_devices_can_list_the_files() {
+    // Lists are on by default: fine on this machine, not on a network.
+    let dir = TempDir::new("lists-everywhere");
+    dir.write("index.html", "<html>hi</html>");
+
+    let reachable = Server::start(dir.path(), &["--host", "0.0.0.0"]);
+    assert!(
+        reachable.said("other devices can list the files here"),
+        "{}",
+        reachable.lines().join("\n")
+    );
+
+    let turned_off = Server::start(dir.path(), &["--host", "0.0.0.0", "--no-list"]);
+    assert!(
+        !turned_off.said("other devices can list") && turned_off.said("File lists     : off"),
+        "{}",
+        turned_off.lines().join("\n")
+    );
+
+    let local = Server::start(dir.path(), &[]);
+    assert!(
+        !local.said("other devices can list"),
+        "{}",
+        local.lines().join("\n")
+    );
 }
 
 #[test]

@@ -129,6 +129,66 @@ fn refuses_to_climb_out_of_the_directory() {
 }
 
 #[test]
+fn a_folder_named_like_a_site_is_never_a_way_to_that_site() {
+    // A mirrored site lives in a folder named after it. A redirect to
+    // `//example.com/` would send the browser to that site.
+    let dir = site("open-redirect");
+    dir.write("example.com/index.html", "<html>mirror</html>");
+    let server = Server::start(dir.path(), &[]);
+
+    for (address, location) in [
+        ("//example.com", "/example.com/"),
+        ("///example.com", "/example.com/"),
+        ("//example.com?page=2", "/example.com/?page=2"),
+    ] {
+        let response = get(server.port, address);
+        assert_eq!(response.status, 307, "for {address}");
+        assert_eq!(response.header("location"), Some(location), "for {address}");
+    }
+
+    assert!(get(server.port, "//example.com/").text().contains("mirror"));
+}
+
+#[test]
+fn slashes_in_front_do_not_get_past_the_refusals() {
+    // Leading slashes are collapsed before the refusals run.
+    let dir = site("slashes-refused");
+    dir.write(".env", "API_KEY=secret");
+    let server = Server::start(dir.path(), &[]);
+
+    for address in [
+        "//.env",
+        "///.env",
+        "//../../etc/passwd",
+        "//%2e%2e/%2e%2e/etc/passwd",
+    ] {
+        let response = get(server.port, address);
+        assert_eq!(response.status, 404, "for {address}");
+        assert!(!response.text().contains("API_KEY"), "for {address}");
+        assert!(!response.text().contains("root:"), "for {address}");
+    }
+}
+
+/// Windows doesn't allow backslashes in folder names.
+#[cfg(unix)]
+#[test]
+fn a_backslash_among_the_slashes_in_front_is_no_way_to_another_site_either() {
+    // A browser reads `/\example.com/` in a redirect as `//example.com/`.
+    let dir = site("backslash-redirect");
+    dir.write("\\example.com/index.html", "<html>mirror</html>");
+    let server = Server::start(dir.path(), &[]);
+
+    for address in ["/\\example.com", "//\\example.com", "/\\/example.com"] {
+        let response = get(server.port, address);
+        let location = response.header("location").unwrap_or_default();
+        assert!(
+            !location.starts_with("//") && !location.starts_with("/\\"),
+            "for {address}: {location}"
+        );
+    }
+}
+
+#[test]
 fn only_answers_the_methods_a_static_site_needs() {
     let dir = site("methods");
     let server = Server::start(dir.path(), &[]);
@@ -212,5 +272,61 @@ mod links {
 
         assert_eq!(get(server.port, "/linked/app.css").status, 200);
         assert_eq!(get(server.port, "/linked/app.css").text(), "body {}");
+    }
+
+    #[test]
+    fn an_index_page_leading_out_is_refused_at_its_folder_as_well() {
+        // The folder is inside, but its index.html links outside.
+        let dir = TempDir::new("index-link-out");
+        let elsewhere = TempDir::new("index-link-target");
+        dir.write("index.html", "<html>hi</html>");
+        dir.write("docs/guide.html", "<html>guide</html>");
+        elsewhere.write("secret.html", "SECRET");
+        symlink(elsewhere.join("secret.html"), dir.join("docs/index.html"))
+            .expect("could not make the link");
+
+        let server = Server::start(dir.path(), &[]);
+
+        assert_eq!(get(server.port, "/docs/index.html").status, 404);
+        let folder = get(server.port, "/docs/");
+        assert_eq!(folder.status, 404);
+        assert!(!folder.text().contains("SECRET"));
+    }
+
+    #[test]
+    fn an_index_page_linked_from_inside_still_answers_at_its_folder() {
+        // Only links leading out are refused; links inside are fine.
+        let dir = TempDir::new("index-link-in");
+        dir.write("index.html", "<html>hi</html>");
+        dir.write("shared/page.html", "<html>shared page</html>");
+        std::fs::create_dir_all(dir.join("docs")).expect("could not create the folder");
+        symlink(dir.join("shared/page.html"), dir.join("docs/index.html"))
+            .expect("could not make the link");
+
+        let server = Server::start(dir.path(), &[]);
+
+        let folder = get(server.port, "/docs/");
+        assert_eq!(folder.status, 200);
+        assert!(folder.text().contains("shared page"));
+    }
+
+    #[test]
+    fn a_link_to_something_hidden_is_refused_whatever_it_is_called() {
+        // What matters is where a link leads, not its name: `docs` pointing
+        // to `.git` must not expose it.
+        let dir = TempDir::new("link-to-hidden");
+        dir.write("index.html", "<html>hi</html>");
+        dir.write(".git/config", "[core] secret");
+        dir.write(".env", "API_KEY=secret");
+        symlink(dir.join(".git"), dir.join("docs")).expect("could not make the link");
+        symlink(dir.join(".env"), dir.join("visible.txt")).expect("could not make the link");
+
+        let server = Server::start(dir.path(), &[]);
+
+        for address in ["/docs/config", "/docs/", "/visible.txt"] {
+            let response = get(server.port, address);
+            assert_eq!(response.status, 404, "for {address}");
+            assert!(!response.text().contains("secret"), "for {address}");
+        }
     }
 }

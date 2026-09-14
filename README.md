@@ -9,9 +9,11 @@ when they change.
 - Live reload, debounced by 200 ms
 - Gzip and Brotli compression
 - Single-page app (SPA) fallback
+- File lists for folders, with or without an `index.html`
 - Optional long-term caching for published assets
 - Safe defaults: localhost only, no caching, hidden files blocked
-- Protection against serving files through symlinks outside the chosen directory
+- Protection against serving files through symlinks that lead outside the chosen
+  directory or to hidden files
 - Security headers including `X-Content-Type-Options`, `X-Frame-Options`, and
   `Referrer-Policy`
 
@@ -67,6 +69,7 @@ servio --open
 | `-p, --port <PORT>` | `3030` | Port to use |
 | `--host <HOST>` | `127.0.0.1` | Address to listen on |
 | `--spa` | off | Serve `index.html` when a page route matches no file |
+| `--no-list` | off | Do not show a folder's files, neither where it has no `index.html` nor with `?list` |
 | `--no-reload` | off | Disable file watching and browser refreshes |
 | `--poll` | off | Find changes by looking at the files, once a second |
 | `--cache-assets` | off | Cache files under `/assets/` for one year |
@@ -187,14 +190,44 @@ that clears the output directory, servio says so in the terminal. It says it
 once each time the page goes missing rather than once per route, so a broken
 build does not leave every address returning 404 without explanation.
 
-Without `--spa`, every missing path returns 404.
+Without `--spa`, an address with nothing behind it returns 404.
+
+## File lists
+
+Opening a folder that has no `index.html` shows the files in it. A folder that
+has one shows its page; add `?list` to its address to see its files instead:
+
+| Address | Shows |
+| --- | --- |
+| `http://localhost:3030/` | the page, `index.html` |
+| `http://localhost:3030/?list` | the files in the served directory |
+| `http://localhost:3030/docs/?list` | the files in `docs` |
+
+Folders come first, then files, each with its size and the time it was last
+written. A file's link opens the file, `index.html` included. On a list asked
+for with `?list`, a folder's link keeps asking, so a walk down and back up
+stays on the lists. Hidden files, and links leading out of the served directory
+or to anything hidden, are left off, since none of them is ever served. With
+live reload on, the list refreshes when the files change.
+
+With `--spa`, a browser opening a folder with no `index.html` gets the app, as
+it does at any other address with nothing behind it; `?list` still shows the
+folder's files.
+
+A list shows every name in a folder to anyone who can reach the server.
+`--no-list` turns lists off: a folder with no `index.html` answers 404 again,
+and `?list` changes nothing. Use it whenever other devices can reach the
+server, a proxy in front of it included. The banner warns when servio listens
+beyond this machine with lists on, but it cannot tell when a proxy passes
+requests along.
 
 ## Serving a published site
 
-Disable live reload and enable caching for content-hashed assets:
+Disable live reload and file lists, and enable caching for content-hashed
+assets:
 
 ```bash
-servio --dir site_public --host 0.0.0.0 --spa --no-reload --cache-assets
+servio --dir site_public --host 0.0.0.0 --spa --no-reload --no-list --cache-assets
 ```
 
 `--cache-assets` gives files under `/assets/` a one-year immutable cache

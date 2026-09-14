@@ -38,8 +38,10 @@ jobs:
     strategy:
       matrix:
         include:
+          # A fixed version: the binary needs this system's glibc, which the
+          # README names.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
           # The Raspberry Pi this is developed on, among others.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
@@ -90,6 +92,9 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Checksums
+        run: sha256sum servio-*.tar.gz servio-*.zip > SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -97,3 +102,4 @@ jobs:
           files: |
             servio-*.tar.gz
             servio-*.zip
+            SHA256SUMS

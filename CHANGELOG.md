@@ -14,6 +14,8 @@
   browsers may keep files as long as they check for changes before using them.
   With `--cache-assets` as well, files under `/assets/` are still kept for a
   year
+- Each GitHub release comes with `SHA256SUMS`, to check the downloaded
+  archives against, and the README explains how to install them
 
 ### Fixed
 - The banner wrote the codes for its colours and its link into files and

@@ -38,8 +38,9 @@ That one command, in this order:
 Pushing the tag starts `.github/workflows/release.yml`. It runs the tests on
 Linux, macOS and Windows, and only if they all pass builds binaries for Linux
 (x86-64 and arm64), macOS (Intel and Apple silicon) and Windows, and attaches
-them to a GitHub release. The crate is on crates.io by
-then, so failing tests there hold back the binaries, not the crate.
+them to a GitHub release with their checksums in `SHA256SUMS`. The crate is on
+crates.io by then, so failing tests there hold back the binaries, not the
+crate.
 
 Say `patch` for a fix, `minor` for a new flag or a new behaviour, and `major`
 for anything that changes what an existing command already does. On its own,

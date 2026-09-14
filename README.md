@@ -20,16 +20,58 @@ change. `--production` serves the finished site instead.
 
 ## Install
 
-Rust 1.88 or newer is required.
+### A prebuilt program
+
+Each [release](https://github.com/alexylon/servio/releases) has an archive for
+each system below, holding just the program. Running it needs no Rust.
+
+| System | Archive |
+| --- | --- |
+| Linux, x86-64 | `servio-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux, arm64 | `servio-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS, Apple silicon | `servio-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `servio-x86_64-apple-darwin.tar.gz` |
+| Windows, x86-64 | `servio-x86_64-pc-windows-msvc.zip` |
+
+The Linux programs need glibc 2.39 or newer, as on Ubuntu 24.04, Debian 13 and
+Fedora 40 or later.
+
+On Linux or macOS, download your archive and the `SHA256SUMS` file, which
+releases after 0.6.2 include. Check the archive against it, then put `servio`
+in a directory on your `PATH`:
 
 ```bash
-cargo install servio
+archive=servio-aarch64-apple-darwin.tar.gz   # yours, from the table
+curl -fLO https://github.com/alexylon/servio/releases/latest/download/$archive
+curl -fLO https://github.com/alexylon/servio/releases/latest/download/SHA256SUMS
+grep " $archive\$" SHA256SUMS | shasum -a 256 -c   # or sha256sum -c on Linux
+tar xzf $archive
+sudo mkdir -p /usr/local/bin && sudo mv servio /usr/local/bin/
+servio --version
+```
+
+On Windows, download `servio-x86_64-pc-windows-msvc.zip` and `SHA256SUMS`.
+In PowerShell, `Get-FileHash servio-x86_64-pc-windows-msvc.zip` should print
+the hash on the zip's line in `SHA256SUMS`, in capital letters. Then unzip
+`servio.exe` into a folder on your `PATH`.
+
+macOS may refuse to run a program downloaded by a browser, since these are not
+notarized by Apple; `xattr -d com.apple.quarantine servio` lets it run.
+Downloaded with `curl`, as above, it runs as it is.
+
+### With Cargo
+
+Rust 1.88 or newer is required. `--locked` builds with the versions of the
+dependencies that servio was tested with:
+
+```bash
+cargo install --locked servio
 ```
 
 To install the latest development version:
 
 ```bash
-cargo install --git https://github.com/alexylon/servio
+cargo install --locked --git https://github.com/alexylon/servio
 ```
 
 To install from a local clone:
@@ -37,7 +79,7 @@ To install from a local clone:
 ```bash
 git clone https://github.com/alexylon/servio
 cd servio
-cargo install --path .
+cargo install --locked --path .
 ```
 
 ## Usage

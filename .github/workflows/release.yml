@@ -5,14 +5,36 @@ on:
     tags:
       - "v*"
 
+# Only the job that creates the GitHub release writes to the repository.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # No binaries come from a tag whose tests fail. The crate is already on
+  # crates.io when the tag is pushed, so this holds back the binaries only.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@efcb852328a9f50117170cc43094fb6f09eaf1ae # stable
+        with:
+          toolchain: stable
+
+      - name: Test
+        run: cargo test --locked
+
   build:
+    needs: test
     strategy:
       matrix:
         include:
@@ -60,6 +82,8 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

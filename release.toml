@@ -1,4 +1,5 @@
-# cargo-release: version bump, changelog stamp, tag, publish, push.
+# cargo-release, in this order: version, changelog, tests, commit, publish,
+# tag, push.
 # Reference: https://rust-lang.github.io/cargo-release/
 
 pre-release-commit-message = "Release {{version}}"
@@ -13,8 +14,15 @@ push-remote = "origin"
 
 consolidate-commits = false
 
-# Build and test the packaged crate before it goes out.
+# While publishing, Cargo builds the crate as packaged before uploading it. That
+# build runs no tests; the hook below runs them, on the source.
 verify = true
+
+# The tests, before the release commit; a failure stops the release. They build
+# in their own directory: packaging leaves a copy of the crate in target/package,
+# which a build in target can take for the source when the same version is tried
+# again, so the tests would run the old code.
+pre-release-hook = ["cargo", "test", "--locked", "--target-dir", "target/release-tests"]
 
 # Move whatever is under Unreleased into a section for this version.
 [[pre-release-replacements]]

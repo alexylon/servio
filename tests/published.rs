@@ -1,5 +1,5 @@
-//! `--no-reload` and `--cache-assets`: what changes when the site is published
-//! rather than being worked on.
+//! `--production`, `--no-reload` and `--cache-assets`: what changes when a
+//! finished site is served rather than worked on.
 
 mod common;
 
@@ -134,6 +134,96 @@ fn without_the_flag_nothing_is_kept() {
 }
 
 #[test]
+fn each_mode_tells_the_browser_what_it_may_keep() {
+    const NOTHING: &str = "no-store";
+    const CHECKED: &str = "no-cache";
+    const YEAR: &str = "public, max-age=31536000, immutable";
+
+    let dir = site("modes");
+    // Kept all the same, though its name has no hash: servio does not check.
+    dir.write("assets/logo.png", "png");
+    dir.write("assets/docs/index.html", "<html>docs</html>");
+
+    let addresses = [
+        "/",
+        "/assets/app-abc123.css",
+        "/assets/logo.png",
+        "/assets/not-copied-yet-abc123.js",
+        "/assets/docs/",
+    ];
+    let assets = "files under /assets/ for a year, the rest checked each time";
+    let modes: [(&[&str], &str, [&str; 5]); 4] = [
+        (&[], "off", [NOTHING; 5]),
+        (
+            &["--production"],
+            "on, checked for changes each time",
+            [CHECKED; 5],
+        ),
+        (
+            &["--cache-assets"],
+            assets,
+            [CHECKED, YEAR, YEAR, CHECKED, CHECKED],
+        ),
+        (
+            &["--production", "--cache-assets"],
+            assets,
+            [CHECKED, YEAR, YEAR, CHECKED, CHECKED],
+        ),
+    ];
+
+    for (flags, banner, kept) in modes {
+        let server = Server::start(dir.path(), flags);
+        assert!(
+            server.said(&format!("Caching        : {banner}")),
+            "{flags:?}:\n{}",
+            server.lines().join("\n")
+        );
+
+        for (address, kept) in addresses.into_iter().zip(kept) {
+            assert_eq!(
+                get(server.port, address).header("cache-control"),
+                Some(kept),
+                "{address} with {flags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn production_turns_off_reload_and_lists() {
+    let dir = site("production");
+    dir.write("docs/notes.txt", "notes");
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let page = get_page(server.port, "/?list");
+    assert!(page.text().contains("the app"), "{}", page.text());
+    assert!(!page.text().contains("tower-livereload"));
+    assert_eq!(get_page(server.port, "/docs/").status, 404);
+
+    assert!(server.said("Live reload    : off"));
+    assert!(server.said("File lists     : off"));
+}
+
+#[test]
+fn with_production_an_unchanged_file_is_not_sent_again() {
+    // The browser checks before every use, so an unchanged file must not be
+    // sent again.
+    let dir = site("production-revalidate");
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let modified = get(server.port, "/")
+        .header("last-modified")
+        .expect("no last-modified to test with")
+        .to_string();
+
+    let response = request(server.port, "GET", "/", &[("If-Modified-Since", &modified)]);
+
+    assert_eq!(response.status, 304);
+    assert!(response.body.is_empty());
+    assert_eq!(response.header("cache-control"), Some("no-cache"));
+}
+
+#[test]
 fn no_reload_leaves_the_page_alone() {
     let dir = site("quiet");
     let server = Server::start(dir.path(), &["--no-reload"]);
@@ -164,8 +254,7 @@ fn a_published_site_still_refuses_hidden_files_and_serves_its_routes() {
         dir.path(),
         &[
             "--spa",
-            "--no-reload",
-            "--no-list",
+            "--production",
             "--cache-assets",
             "--host",
             "0.0.0.0",

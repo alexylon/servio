@@ -251,6 +251,40 @@ fn ignoring_and_not_watching_at_all_is_refused() {
 }
 
 #[test]
+fn production_with_polling_or_ignoring_is_refused_whichever_comes_first() {
+    // Production watches nothing, so there is nothing to poll or ignore.
+    let dir = TempDir::new("production-and-watching");
+    dir.write("index.html", "<html>hi</html>");
+    let served = dir.path().to_str().unwrap();
+
+    for (flags, other) in [
+        (&["--production", "--poll"][..], "--poll"),
+        (&["--poll", "--production"][..], "--poll"),
+        (&["--production", "--ignore", "*.log"][..], "--ignore"),
+        (&["--ignore", "*.log", "--production"][..], "--ignore"),
+    ] {
+        let mut args = vec!["--dir", served];
+        args.extend_from_slice(flags);
+        let (said, ok) = run(&args);
+
+        assert!(!ok, "{flags:?} should be refused");
+        assert!(
+            said.contains("--production") && said.contains(other),
+            "{flags:?}: {said}"
+        );
+    }
+}
+
+#[test]
+fn production_may_be_given_with_the_flags_it_stands_for() {
+    let dir = TempDir::new("production-and-its-flags");
+    dir.write("index.html", "<html>hi</html>");
+
+    let server = Server::start(dir.path(), &["--no-list", "--production", "--no-reload"]);
+    assert_eq!(get(server.port, "/").status, 200);
+}
+
+#[test]
 fn a_broken_ignore_pattern_is_refused_in_plain_words() {
     let dir = TempDir::new("broken-ignore");
     dir.write("index.html", "<html>hi</html>");
@@ -287,10 +321,12 @@ fn the_ignore_file_is_left_alone_when_nothing_is_watched() {
     dir.write("index.html", "<html>hi</html>");
     dir.write(".servioignore", "[abc\n");
 
-    let server = Server::start(dir.path(), &["--no-reload"]);
+    for flag in ["--no-reload", "--production"] {
+        let server = Server::start(dir.path(), &[flag]);
 
-    assert!(server.said("Serving"));
-    assert!(!server.said("Ignoring"));
+        assert!(server.said("Serving"), "{flag}");
+        assert!(!server.said("Ignoring"), "{flag}");
+    }
 }
 
 #[cfg(unix)]

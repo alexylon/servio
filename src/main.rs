@@ -9,6 +9,7 @@ mod serve;
 mod watch;
 
 use crate::errors::cannot_reach;
+use crate::serve::Caching;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::net::{IpAddr, Ipv4Addr};
@@ -39,6 +40,11 @@ struct Args {
     #[arg(long)]
     spa: bool,
 
+    /// Serve a finished site: no live reload, no file lists, and browsers check
+    /// a kept file for changes before using it
+    #[arg(long, conflicts_with_all = ["poll", "ignore"])]
+    production: bool,
+
     /// Do not show file lists, not even with ?list
     #[arg(long)]
     no_list: bool,
@@ -67,6 +73,20 @@ struct Args {
     ignore: Vec<String>,
 }
 
+impl Args {
+    /// `--cache-assets` keeps files under /assets/ for a year, with or without
+    /// `--production`.
+    fn caching(&self) -> Caching {
+        if self.cache_assets {
+            Caching::AssetsForAYear
+        } else if self.production {
+            Caching::Checked
+        } else {
+            Caching::Off
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
@@ -79,7 +99,13 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    // `--production` stands for these two, so the checks below need only them.
+    if args.production {
+        args.no_reload = true;
+        args.no_list = true;
+    }
+
     let static_dir = resolve_dir(&args.dir)?;
 
     // A missing path already failed in resolve_dir; this catches a file.
@@ -111,7 +137,7 @@ async fn run() -> Result<()> {
         &static_dir,
         args.spa,
         !args.no_list,
-        args.cache_assets,
+        args.caching(),
         (!args.no_reload).then_some(livereload),
         no_app_page,
     );

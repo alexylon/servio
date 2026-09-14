@@ -69,6 +69,7 @@ servio --open
 | `-p, --port <PORT>` | `3030` | Port to use |
 | `--host <HOST>` | `127.0.0.1` | Address to listen on |
 | `--spa` | off | Serve `index.html` when a page route matches no file |
+| `--production` | off | Serve a finished site: no live reload, no file lists, and browsers check kept files for changes |
 | `--no-list` | off | Do not show a folder's files, neither where it has no `index.html` nor with `?list` |
 | `--no-reload` | off | Disable file watching and browser refreshes |
 | `--poll` | off | Find changes by looking at the files, once a second |
@@ -176,8 +177,8 @@ Links are not followed. The server refuses to hand out anything outside the
 served directory, so a link leading out cannot change what the browser sees,
 and one leading back in points at files each look reads anyway.
 
-Neither `--poll` nor `--ignore` can be combined with `--no-reload`, which
-turns off watching altogether.
+Neither `--poll` nor `--ignore` can be combined with `--no-reload` or
+`--production`, which turn off watching altogether.
 
 ## Single-page apps
 
@@ -223,15 +224,18 @@ requests along.
 
 ## Serving a published site
 
-Disable live reload and file lists, and enable caching for content-hashed
-assets:
+`--production` turns off live reload and file lists. Browsers may keep the
+files, but check with servio for changes before using one, and a file that has
+not changed is not sent again:
 
 ```bash
-servio --dir site_public --host 0.0.0.0 --spa --no-reload --no-list --cache-assets
+servio --dir site_public --host 0.0.0.0 --spa --production
 ```
 
-`--cache-assets` gives files under `/assets/` a one-year immutable cache
-policy. Other files are revalidated so visitors still receive updated pages.
+`--cache-assets` lets browsers keep files under `/assets/` for a year without
+checking. Use it only when the build gives a file there a new name whenever its
+contents change, such as `app-3f9a1c.js`: servio does not check the names. It
+works with or without `--production`.
 
 When exposing servio to a network, serve only the intended build directory.
 Hidden paths are blocked apart from `.well-known`, which certificate renewal

@@ -21,12 +21,27 @@ use tower_livereload::LiveReloadLayer;
 
 pub(crate) const INDEX_FILE: &str = "index.html";
 
-/// Where a build puts files whose name changes with their contents, so the
-/// browser can keep them for as long as it likes.
+/// What browsers may keep.
+#[derive(Clone, Copy)]
+pub(crate) enum Caching {
+    /// Nothing, since any file may have just changed.
+    Off,
+    /// Anything, checked for changes before each use. For `--production`.
+    Checked,
+    /// Files under /assets/ for a year without a check, and the rest checked.
+    /// For `--cache-assets`.
+    AssetsForAYear,
+}
+
+/// Where a build puts scripts, styles and images. `--cache-assets` takes a
+/// name here to change whenever the file's contents do.
 const ASSETS: &str = "/assets/";
 
 /// A year, the longest any browser is asked to keep a file.
 const KEEP_FOR_A_YEAR: &str = "public, max-age=31536000, immutable";
+
+/// Keep it, but ask the server whether it changed before using it.
+const CHECK_BEFORE_USE: &str = "no-cache";
 
 /// The file service and the layers around it. Each layer added wraps the ones
 /// before it, and the order matters:
@@ -43,7 +58,7 @@ pub(crate) fn app(
     static_dir: &Path,
     spa: bool,
     list: bool,
-    cache_assets: bool,
+    caching: Caching,
     livereload: Option<LiveReloadLayer>,
     no_app_page: bool,
 ) -> Router {
@@ -91,14 +106,13 @@ pub(crate) fn app(
             refuse_paths_outside(root.clone(), request, next)
         }));
 
-    if cache_assets {
-        app = app.layer(middleware::from_fn(keep_hashed_assets));
-    } else {
-        // Never let the browser hold on to a stale file.
-        app = app
+    app = match caching {
+        Caching::Off => app
             .layer(middleware::from_fn(always_answer_in_full))
-            .layer(set_header(header::CACHE_CONTROL, "no-store"));
-    }
+            .layer(set_header(header::CACHE_CONTROL, "no-store")),
+        Caching::Checked => app.layer(set_header(header::CACHE_CONTROL, CHECK_BEFORE_USE)),
+        Caching::AssetsForAYear => app.layer(middleware::from_fn(keep_assets)),
+    };
 
     app.layer(set_header(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(set_header(header::X_FRAME_OPTIONS, "SAMEORIGIN"))
@@ -153,9 +167,9 @@ async fn serve_app_shell(
         .and_then(|accept| accept.to_str().ok())
         .is_some_and(|accept| accept.contains("text/html"));
 
-    // A name under /assets/ carries a hash of the file's contents, so it is
-    // a built file, never a route. Handing the app back there would leave the
-    // browser keeping a page at that address for a year.
+    // Anything under /assets/ is a built file, never a route. Handing the app
+    // back there could leave the browser keeping a page at that address for a
+    // year.
     let could_be_a_route = !request.uri().path().starts_with(ASSETS);
 
     let response = next.run(request).await;
@@ -222,13 +236,13 @@ async fn always_answer_in_full(mut request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
-/// What a published site tells the browser to keep. Names under `/assets/`
-/// carry a hash of their contents, so the file at one of those addresses
-/// never changes. Everything else is checked each time.
-async fn keep_hashed_assets(request: Request, next: Next) -> Response {
-    // An address ending in `/` is a folder, never a hashed file.
+/// Keeps a file under /assets/ for a year, and has everything else checked.
+/// This relies on a file there getting a new name whenever it changes, as the
+/// hashed names from a build do; nothing here checks.
+async fn keep_assets(request: Request, next: Next) -> Response {
+    // An address ending in `/` is a folder, whose page can change.
     let path = request.uri().path();
-    let hashed = path.starts_with(ASSETS) && !path.ends_with('/');
+    let asset = path.starts_with(ASSETS) && !path.ends_with('/');
     let mut response = next.run(request).await;
 
     // Only a file that is really there: one missing during a deploy would
@@ -236,11 +250,15 @@ async fn keep_hashed_assets(request: Request, next: Next) -> Response {
     // counts, since the browser takes the headers on that answer as the
     // file's own.
     let there = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
-    let keep = hashed && there;
+    let keep = asset && there;
 
     response.headers_mut().insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static(if keep { KEEP_FOR_A_YEAR } else { "no-cache" }),
+        HeaderValue::from_static(if keep {
+            KEEP_FOR_A_YEAR
+        } else {
+            CHECK_BEFORE_USE
+        }),
     );
 
     response

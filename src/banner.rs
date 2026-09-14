@@ -3,7 +3,7 @@
 use crate::Args;
 use crate::ignore::IGNORE_FILE;
 use crate::listen::DEFAULT_PORT;
-use crate::serve::INDEX_FILE;
+use crate::serve::{Caching, INDEX_FILE};
 use crate::watch::POLL_INTERVAL;
 use std::fmt::Display;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -51,10 +51,12 @@ pub(crate) fn print(
     );
     row(
         "Caching",
-        if args.cache_assets {
-            "files under /assets/ for a year"
-        } else {
-            "off"
+        match args.caching() {
+            Caching::Off => "off",
+            Caching::Checked => "on, checked for changes each time",
+            Caching::AssetsForAYear => {
+                "files under /assets/ for a year, the rest checked each time"
+            }
         },
     );
     if no_app_page {

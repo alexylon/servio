@@ -167,6 +167,18 @@ fn says_what_it_is_doing_on_the_way_up() {
 }
 
 #[test]
+fn a_banner_not_shown_in_a_terminal_has_no_colours_or_links() {
+    // In a file or read by another program, their codes are noise.
+    let dir = TempDir::new("plain-banner");
+    dir.write("index.html", "<html>hi</html>");
+
+    let server = Server::start(dir.path(), &[]);
+
+    assert!(server.said("Open"));
+    assert!(!server.said("\x1b"), "{:?}", server.lines());
+}
+
+#[test]
 fn warns_when_other_devices_can_list_the_files() {
     // Lists are on by default: fine on this machine, not on a network.
     let dir = TempDir::new("lists-everywhere");

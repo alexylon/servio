@@ -16,6 +16,9 @@
   year
 
 ### Fixed
+- The banner wrote the codes for its colours and its link into files and
+  pipes, where they are noise. It now writes them only to a terminal, and
+  leaves the colours out when `NO_COLOR` is set
 - With `--cache-assets`, a page at a folder's own address under `/assets/`,
   such as `/assets/docs/`, was kept for a year, though a folder's name carries
   no hash

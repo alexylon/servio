@@ -255,7 +255,6 @@ fn collect(
 ) {
     std::thread::spawn(move || {
         for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let line = visible(&line);
             let port = found_port.as_ref().zip(port_in(&line));
             log.lock().unwrap().push(line);
 
@@ -277,44 +276,6 @@ fn port_in(line: &str) -> Option<u16> {
     }
 
     address.trim().rsplit(':').next()?.trim().parse().ok()
-}
-
-/// The text of a line without the colours and links wrapped around it, so
-/// tests read what a person would see.
-fn visible(line: &str) -> String {
-    let mut text = String::new();
-    let mut characters = line.chars();
-
-    while let Some(character) = characters.next() {
-        if character != '\x1b' {
-            text.push(character);
-            continue;
-        }
-
-        match characters.next() {
-            // A colour, ended by a letter.
-            Some('[') => {
-                for character in characters.by_ref() {
-                    if character.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            // A link, ended by ESC \\ — this drops the address it points at.
-            Some(']') => {
-                let mut escaped = false;
-                for character in characters.by_ref() {
-                    if escaped && character == '\\' {
-                        break;
-                    }
-                    escaped = character == '\x1b';
-                }
-            }
-            _ => {}
-        }
-    }
-
-    text
 }
 
 pub struct Response {

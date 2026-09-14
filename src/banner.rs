@@ -5,7 +5,9 @@ use crate::ignore::IGNORE_FILE;
 use crate::listen::DEFAULT_PORT;
 use crate::serve::{Caching, INDEX_FILE};
 use crate::watch::POLL_INTERVAL;
+use std::ffi::OsStr;
 use std::fmt::Display;
+use std::io::IsTerminal;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 
@@ -18,6 +20,33 @@ const RULE: &str = "-----------------------------------------------";
 /// Fits the longest label, so the colons line up.
 const LABEL_WIDTH: usize = 15;
 
+/// Whether the banner may colour its text and make links.
+#[derive(Clone, Copy)]
+struct Style {
+    colour: bool,
+    links: bool,
+}
+
+impl Style {
+    fn for_stdout() -> Style {
+        Style::new(
+            std::io::stdout().is_terminal(),
+            std::env::var_os("NO_COLOR").as_deref(),
+        )
+    }
+
+    /// Only a terminal shows colours and links; in a file or a pipe their codes
+    /// are noise. A `NO_COLOR` that is not empty turns colour off in a terminal
+    /// too.
+    fn new(terminal: bool, no_color: Option<&OsStr>) -> Style {
+        let no_color = no_color.is_some_and(|value| !value.is_empty());
+        Style {
+            colour: terminal && !no_color,
+            links: terminal,
+        }
+    }
+}
+
 pub(crate) fn print(
     bound: SocketAddr,
     args: &Args,
@@ -25,23 +54,26 @@ pub(crate) fn print(
     no_app_page: bool,
     from_ignore_file: usize,
 ) {
+    let style = Style::for_stdout();
     let authority = authority(bound);
     let url = url(bound);
 
     println!("{RULE}");
-    row("Serving", static_dir.display());
+    row(style, "Serving", static_dir.display());
     if args.port.is_none() && bound.port() != DEFAULT_PORT {
         row(
+            style,
             "Note",
             format!("port {DEFAULT_PORT} was busy, using {}", bound.port()),
         );
     }
-    row("Live reload", live_reload(args));
+    row(style, "Live reload", live_reload(args));
     if let Some(ignoring) = ignoring(&args.ignore, from_ignore_file) {
-        row("Ignoring", ignoring);
+        row(style, "Ignoring", ignoring);
     }
-    row("Single-page app", on_off(args.spa));
+    row(style, "Single-page app", on_off(args.spa));
     row(
+        style,
         "File lists",
         if args.no_list {
             "off"
@@ -50,6 +82,7 @@ pub(crate) fn print(
         },
     );
     row(
+        style,
         "Caching",
         match args.caching() {
             Caching::Off => "off",
@@ -61,17 +94,19 @@ pub(crate) fn print(
     );
     if no_app_page {
         row(
+            style,
             "Warning",
             format!("there is no {INDEX_FILE} here, so the app will not load"),
         );
     }
     if !args.no_list && reachable_from_elsewhere(args.host) {
         row(
+            style,
             "Warning",
             "other devices can list the files here; --no-list turns that off",
         );
     }
-    row("Open", hyperlink(&url, &authority));
+    row(style, "Open", hyperlink(style, &url, &authority));
     println!("{RULE}\n");
 }
 
@@ -103,8 +138,12 @@ fn reachable_from_elsewhere(host: IpAddr) -> bool {
     !host.to_canonical().is_loopback()
 }
 
-fn row(label: &str, value: impl Display) {
-    println!("  {label:<LABEL_WIDTH$}: {BLUE}{value}{RESET}");
+fn row(style: Style, label: &str, value: impl Display) {
+    if style.colour {
+        println!("  {label:<LABEL_WIDTH$}: {BLUE}{value}{RESET}");
+    } else {
+        println!("  {label:<LABEL_WIDTH$}: {value}");
+    }
 }
 
 /// Worth saying when the server is looking at the files rather than being told
@@ -139,8 +178,12 @@ fn on_off(enabled: bool) -> &'static str {
 }
 
 /// Makes `text` a clickable link to `url` in terminals that support it.
-fn hyperlink(url: &str, text: impl Display) -> String {
-    format!("{LINK_START}{url}{LINK_MID}{text}{LINK_END}")
+fn hyperlink(style: Style, url: &str, text: impl Display) -> String {
+    if style.links {
+        format!("{LINK_START}{url}{LINK_MID}{text}{LINK_END}")
+    } else {
+        text.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +200,24 @@ mod tests {
             let host: IpAddr = open.parse().unwrap();
             assert!(reachable_from_elsewhere(host), "{open}");
         }
+    }
+
+    #[test]
+    fn only_a_terminal_gets_colour_and_links() {
+        let terminal = Style::new(true, None);
+        assert!(terminal.colour && terminal.links);
+
+        let elsewhere = Style::new(false, None);
+        assert!(!elsewhere.colour && !elsewhere.links);
+    }
+
+    #[test]
+    fn no_color_turns_colour_off_but_leaves_links_unless_it_is_empty() {
+        let set = Style::new(true, Some(OsStr::new("1")));
+        assert!(!set.colour && set.links);
+
+        let empty = Style::new(true, Some(OsStr::new("")));
+        assert!(empty.colour && empty.links);
     }
 
     #[test]

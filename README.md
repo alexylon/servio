@@ -133,6 +133,11 @@ If no browser can be opened, or the one named stops at once with an error,
 servio says so and keeps serving. With `--poll`, the browser opens once the
 first look at the files is done.
 
+In a terminal, the banner is coloured, and its address is a link where the
+terminal supports one. Written to a file or read by another program, it is
+plain text. A `NO_COLOR` that is not empty leaves the colours out in a terminal
+too.
+
 ## Live reload
 
 Saving a file refreshes the browser. servio ignores changes in hidden

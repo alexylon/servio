@@ -21,7 +21,7 @@ use tower_livereload::LiveReloadLayer;
 #[command(
     author,
     version,
-    about = "HTTP server for static files, with live reload, for local development"
+    about = "HTTP server for static files, with live reload for local development and a production mode for finished sites"
 )]
 struct Args {
     /// Port to listen on [default: 3030, or the next free one]
@@ -58,7 +58,8 @@ struct Args {
     #[arg(long, conflicts_with = "no_reload")]
     poll: bool,
 
-    /// Let the browser keep files under /assets/ for a year, for a published site
+    /// Let browsers keep files under /assets/ for a year; only safe when a file
+    /// there gets a new name whenever it changes
     #[arg(long)]
     cache_assets: bool,
 

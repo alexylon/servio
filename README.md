@@ -1,16 +1,17 @@
 # servio
 
-An HTTP server for static files, with live reload, built with Axum. It is
-designed for local development: files are not cached, and the browser refreshes
-when they change.
+An HTTP server for static files, with live reload, built with Axum. While you
+work on a site, files are not cached and the browser refreshes when they
+change. `--production` serves the finished site instead.
 
 ## Features
 
 - Live reload, debounced by 200 ms
+- A production mode for serving a finished site
 - Gzip and Brotli compression
 - Single-page app (SPA) fallback
 - File lists for folders, with or without an `index.html`
-- Optional long-term caching for published assets
+- Optional long-term caching for versioned assets
 - Safe defaults: localhost only, no caching, hidden files blocked
 - Protection against serving files through symlinks that lead outside the chosen
   directory or to hidden files
@@ -39,27 +40,56 @@ cd servio
 cargo install --path .
 ```
 
-## Quick start
+## Usage
+
+### Working on a site
 
 Run `servio` in the directory you want to serve, then open the address shown
-in the terminal.
+in the terminal. Saving a file refreshes the browser.
 
 ```bash
-# Serve the current directory at http://127.0.0.1:3030
+# Serve the current directory at http://localhost:3030
 servio
 
-# Serve another directory on port 8080
-servio --dir /path/to/static --port 8080
-
-# Fall back to index.html for SPA routes such as /users/123
-servio --spa
-
-# Make the server reachable from other devices on your network
-servio --host 0.0.0.0
-
-# Open the browser as well
-servio --open
+# Serve another directory on port 8080, and open it in the browser
+servio --dir site_public --port 8080 --open
 ```
+
+### Testing on other devices
+
+```bash
+servio --dir site_public --host 0.0.0.0 --no-list
+```
+
+Phones and other computers on the same network open this machine's address,
+such as `http://192.168.1.20:3030`, and still refresh when a file changes.
+`--no-list` keeps the file lists from them.
+
+### Serving a finished site
+
+```bash
+servio --dir site_public --port 3030 --production
+```
+
+`--production` turns off live reload and file lists, and lets browsers keep
+files as long as they check for changes first. Give the port a proxy or service
+expects: without `--port`, servio picks the next free port when 3030 is busy,
+and the proxy keeps sending requests to 3030. The default host, `127.0.0.1`,
+suits a proxy on the same machine.
+
+### Single-page apps
+
+```bash
+# While working on the app
+servio --dir dist --spa
+
+# The finished app, with versioned file names under /assets/
+servio --dir dist --port 3030 --production --spa --cache-assets
+```
+
+`--spa` answers a route such as `/users/123` with `index.html`.
+`--cache-assets` is for a build that gives files under `/assets/` a new name
+whenever they change; see [Caching](#caching).
 
 ## Options
 
@@ -73,7 +103,7 @@ servio --open
 | `--no-list` | off | Do not show a folder's files, neither where it has no `index.html` nor with `?list` |
 | `--no-reload` | off | Disable file watching and browser refreshes |
 | `--poll` | off | Find changes by looking at the files, once a second |
-| `--cache-assets` | off | Cache files under `/assets/` for one year |
+| `--cache-assets` | off | Let browsers keep files under `/assets/` for a year; only safe when a file there gets a new name whenever it changes |
 | `--open` | off | Open the address in the browser |
 | `--ignore <PATTERN>` | none | Do not refresh the browser for changes matching this pattern; may be given more than once |
 
@@ -180,7 +210,7 @@ and one leading back in points at files each look reads anyway.
 Neither `--poll` nor `--ignore` can be combined with `--no-reload` or
 `--production`, which turn off watching altogether.
 
-## Single-page apps
+## Single-page app fallback
 
 With `--spa`, missing page routes fall back to `index.html` so the client-side
 router can handle them. Missing scripts, stylesheets, images, and anything
@@ -216,26 +246,36 @@ it does at any other address with nothing behind it; `?list` still shows the
 folder's files.
 
 A list shows every name in a folder to anyone who can reach the server.
-`--no-list` turns lists off: a folder with no `index.html` answers 404 again,
-and `?list` changes nothing. Use it whenever other devices can reach the
-server, a proxy in front of it included. The banner warns when servio listens
-beyond this machine with lists on, but it cannot tell when a proxy passes
-requests along.
+`--no-list` turns lists off, and so does `--production`: a folder with no
+`index.html` answers 404 again, and `?list` changes nothing. The files are
+still served to anyone who asks for them by name. Turn lists off whenever other
+devices can reach the server, a proxy in front of it included. The banner warns
+when servio listens beyond this machine with lists on, but it cannot tell when
+a proxy passes requests along.
 
-## Serving a published site
+## Caching
 
-`--production` turns off live reload and file lists. Browsers may keep the
-files, but check with servio for changes before using one, and a file that has
-not changed is not sent again:
+What browsers may keep depends on two flags:
 
-```bash
-servio --dir site_public --host 0.0.0.0 --spa --production
-```
+| Flags | Files under `/assets/` | Everything else |
+| --- | --- | --- |
+| neither | nothing | nothing |
+| `--production` | kept, checked before each use | kept, checked before each use |
+| `--cache-assets`, with or without `--production` | kept for a year without a check | kept, checked before each use |
 
-`--cache-assets` lets browsers keep files under `/assets/` for a year without
-checking. Use it only when the build gives a file there a new name whenever its
-contents change, such as `app-3f9a1c.js`: servio does not check the names. It
-works with or without `--production`.
+With neither flag, servio sends `Cache-Control: no-store` and never answers
+that a file is unchanged, so an edit shows at once. Checked before each use is
+`no-cache`: the browser asks whether its copy changed, and a file that has not
+changed is not sent again. A year is `public, max-age=31536000, immutable`.
+
+Use `--cache-assets` only when the build gives a file under `/assets/` a new
+name whenever its contents change, such as `app-3f9a1c.js`. servio does not
+check the names, so a file that changes but keeps its name stays stale for a
+year in browsers that already have it. A missing file, and a folder's own page
+under `/assets/`, are still checked before each use, so a deploy caught halfway
+is not remembered.
+
+## Serving on a network
 
 When exposing servio to a network, serve only the intended build directory.
 Hidden paths are blocked apart from `.well-known`, which certificate renewal

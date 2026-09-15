@@ -186,18 +186,18 @@ fn report_changes(
                 return;
             }
 
-            // A poll has its own account of what the files were, so it never
-            // reports one that was there all along.
-            let settling_in = !polling && watching_since.elapsed() < SETTLING_IN;
+            let settling = settling_in(polling, watching_since, Instant::now());
 
             if events.iter().any(|event| {
                 is_change(&ignored, &root, event, polling)
-                    && !(settling_in && from_before_the_watch(event, watch_went_on))
+                    && !(settling && from_before_the_watch(event, watch_went_on))
             }) {
                 // Whether this is worth a line is decided now, while a
                 // rebuild just announced is still fresh. The refresh itself
                 // waits for the files to go quiet.
-                let _ = changed.send(!just_announced(&rebuilds.announced, rebuilds.same_rebuild));
+                let echo =
+                    just_announced(&rebuilds.announced, Instant::now(), rebuilds.same_rebuild);
+                let _ = changed.send(!echo);
             }
         }
         // One path a look could not read, not a watch that went down: the rest
@@ -440,6 +440,14 @@ fn same_directory(before: Option<&Watched>, after: Option<FileId>) -> bool {
     before.is_some_and(|it| Some(it.id) == after)
 }
 
+/// True in the first moments after the watch went on, when the system's own
+/// notifications may still hand over files written before then. A poll has its
+/// own account of what the files were, so it never reports one that was there
+/// all along.
+fn settling_in(polling: bool, watching_since: Instant, now: Instant) -> bool {
+    !polling && now.saturating_duration_since(watching_since) < SETTLING_IN
+}
+
 /// True when everything the event names is still there with a write time from
 /// before the watch went on, so nothing has happened to it since.
 ///
@@ -595,14 +603,15 @@ fn replaced_under_the_watch(watching: &Mutex<Option<FileId>>, root: &Path) -> bo
     }
 }
 
-/// True when a rebuild was announced a moment ago, so what the watcher is
-/// reporting now is that same rebuild reaching it the slower way.
-fn just_announced(at: &Mutex<Option<Instant>>, within: Duration) -> bool {
+/// True when a rebuild was announced less than `within` before `now`, so what
+/// the watcher is reporting then is that same rebuild reaching it the slower
+/// way.
+fn just_announced(at: &Mutex<Option<Instant>>, now: Instant, within: Duration) -> bool {
     let Ok(at) = at.lock() else {
         return false;
     };
 
-    at.is_some_and(|when| when.elapsed() < within)
+    at.is_some_and(|when| now.saturating_duration_since(when) < within)
 }
 
 /// The whole line to print about what one look could not read, or nothing where
@@ -862,6 +871,50 @@ mod tests {
         assert!(same_rebuild(true) >= same_rebuild(false) + POLL_INTERVAL);
     }
 
+    #[test]
+    fn what_arrives_inside_the_window_after_a_rebuild_is_its_echo() {
+        let window = same_rebuild(false);
+        let announced_at = Instant::now();
+        let announced = Mutex::new(Some(announced_at));
+        let a_moment = Duration::from_millis(1);
+
+        assert!(just_announced(&announced, announced_at, window));
+        assert!(just_announced(
+            &announced,
+            announced_at + window - a_moment,
+            window
+        ));
+        assert!(
+            !just_announced(&announced, announced_at + window, window),
+            "a change made once the window closed was taken for the rebuild"
+        );
+        assert!(
+            !just_announced(&Mutex::new(None), announced_at, window),
+            "a change was taken for a rebuild nobody announced"
+        );
+    }
+
+    #[test]
+    fn a_watch_is_settling_in_only_at_first_and_never_when_polling() {
+        let went_on = Instant::now();
+        let a_moment = Duration::from_millis(1);
+
+        assert!(settling_in(false, went_on, went_on));
+        assert!(settling_in(
+            false,
+            went_on,
+            went_on + SETTLING_IN - a_moment
+        ));
+        assert!(
+            !settling_in(false, went_on, went_on + SETTLING_IN),
+            "a change made once the watch had settled was checked against old times"
+        );
+        assert!(
+            !settling_in(true, went_on, went_on),
+            "a poll was taken to hand over old files"
+        );
+    }
+
     fn could_not_read(path: &Path, kind: ErrorKind) -> notify_debouncer_full::notify::Error {
         notify_debouncer_full::notify::Error::io(kind.into()).add_path(path.to_path_buf())
     }
@@ -1050,25 +1103,22 @@ mod tests {
         let page = dir.join("index.html");
         std::fs::write(&page, "<html>before</html>").unwrap();
 
-        let watch_went_on = SystemTime::now();
+        // The watch is taken to go on when the file was written, and a moment
+        // before, so nothing has to wait.
+        let written_at = std::fs::metadata(&page).unwrap().modified().unwrap();
         let about_the_page = written(&[page.to_str().unwrap()]);
         assert!(
-            from_before_the_watch(&about_the_page, watch_went_on),
+            from_before_the_watch(&about_the_page, written_at),
             "a file nobody touched was taken for one that changed"
         );
-
-        // The system stamps a file by a coarser clock than this one, so a
-        // moment's wait keeps the two writes on either side of the moment.
-        std::thread::sleep(Duration::from_millis(50));
-        std::fs::write(&page, "<html>after</html>").unwrap();
         assert!(
-            !from_before_the_watch(&about_the_page, watch_went_on),
+            !from_before_the_watch(&about_the_page, written_at - Duration::from_millis(1)),
             "a file written since the watch went on is a change"
         );
 
         // Gone, so nothing says it was there all along.
         std::fs::remove_file(&page).unwrap();
-        assert!(!from_before_the_watch(&about_the_page, watch_went_on));
+        assert!(!from_before_the_watch(&about_the_page, written_at));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

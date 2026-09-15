@@ -321,10 +321,15 @@ With neither flag, servio sends `Cache-Control: no-store` and never answers
 that a file is unchanged, so an edit shows at once. Checked before each use is
 `no-cache`: the browser asks whether its copy changed, and a file that has not
 changed is not sent again. servio tells by which file it is, its size and the
-time it was written, to a fraction of a second, so a file rolled back to an
-older copy is sent again too. The one change it cannot see is a file rewritten
-in place with the same size and the same time, as when a build gives every file
-one fixed time. A year is `public, max-age=31536000, immutable`.
+time it was written, to a fraction of a second where the disk keeps one, so a
+file rolled back to an older copy is sent again too. A few changes get past it:
+a file rewritten in place with the same size and the same time, as when a build
+gives every file one fixed time; on a disk that keeps whole seconds, a rewrite
+with the same size within one second; and, where the system cannot say which
+file it is, a new file of the same size put in place under the same time. Two
+servers serving the same files give them different tags, so a browser switched
+between them downloads a file again. A year is
+`public, max-age=31536000, immutable`.
 
 Use `--cache-assets` only when the build gives a file under `/assets/` a new
 name whenever its contents change, such as `app-3f9a1c.js`. servio does not

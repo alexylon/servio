@@ -4,7 +4,7 @@ use crate::guard::{
     may_be_served, refuse_hidden_files, refuse_index_pages_outside, refuse_paths_outside,
 };
 use crate::list::serve_file_list;
-use crate::version::{Version, answer_by_version};
+use crate::version::{Version, answer_by_version, identity};
 use axum::Router;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
@@ -293,16 +293,19 @@ async fn keep_assets(request: Request, next: Next) -> Response {
     response
 }
 
-/// The page, and its version as it was read, from one opening of the file.
+/// The page, and its version as it was read. The version is left out if the
+/// page was replaced meanwhile, since its parts could then describe another
+/// file than the one read.
 async fn read_page(index: &Path) -> std::io::Result<(Vec<u8>, Option<Version>)> {
+    let before = identity(index);
     let mut file = tokio::fs::File::open(index).await?;
-    let version = file
-        .metadata()
-        .await
-        .ok()
-        .and_then(|metadata| Version::of(index, &metadata));
+    let metadata = file.metadata().await.ok();
     let mut page = Vec::new();
     file.read_to_end(&mut page).await?;
+
+    let version = metadata
+        .filter(|_| identity(index) == before)
+        .and_then(|metadata| Version::of(before, &metadata));
 
     Ok((page, version))
 }

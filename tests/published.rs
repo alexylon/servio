@@ -305,6 +305,32 @@ fn a_copy_named_by_its_tag_is_not_sent_again() {
 }
 
 #[test]
+fn a_tag_is_one_number_that_stays_when_the_server_starts_again() {
+    // Parts of a tag such as an inode number are read as a leak, as they were
+    // for Apache. A tag that changed with every start would send every file
+    // again after it.
+    let dir = site("opaque-tag");
+    let tag_after_a_start = || {
+        let server = Server::start(dir.path(), &["--production"]);
+        get(server.port, "/")
+            .header("etag")
+            .expect("no tag")
+            .to_string()
+    };
+
+    let tag = tag_after_a_start();
+    let number = tag
+        .strip_prefix("W/\"")
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_default();
+    assert!(
+        number.len() == 16 && number.chars().all(|digit| digit.is_ascii_hexdigit()),
+        "{tag} is not one number"
+    );
+    assert_eq!(tag_after_a_start(), tag);
+}
+
+#[test]
 fn the_rest_of_a_file_that_changed_is_sent_whole() {
     // A browser resuming a download asks for the rest only of the file it
     // began with.

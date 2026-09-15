@@ -12,6 +12,7 @@ use file_id::FileId;
 use http::{HeaderValue, Method, StatusCode, header};
 use percent_encoding::percent_decode_str;
 use std::fs::Metadata;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -22,18 +23,25 @@ pub(crate) struct Version {
 }
 
 impl Version {
-    /// None where the system cannot say when the file was written.
-    pub(crate) fn of(path: &Path, metadata: &Metadata) -> Option<Version> {
+    /// None where the system cannot say when the file was written. `identity`
+    /// is which file this is, where the system can say.
+    pub(crate) fn of(identity: Option<FileId>, metadata: &Metadata) -> Option<Version> {
         let written = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-        // Weak, since compression and the reload script change the bytes sent
-        // without changing the file.
-        let tag = format!(
-            "W/\"{}-{:x}-{:x}.{:x}\"",
-            identity(path),
+
+        // One number made from all the parts, so the tag shows nothing of the
+        // disk, such as an inode. The same parts give the same number on every
+        // run.
+        let mut parts = DefaultHasher::new();
+        (
+            identity,
             metadata.len(),
             written.as_secs(),
-            written.subsec_nanos()
-        );
+            written.subsec_nanos(),
+        )
+            .hash(&mut parts);
+        // Weak, since compression and the reload script change the bytes sent
+        // without changing the file.
+        let tag = format!("W/\"{:016x}\"", parts.finish());
 
         Some(Version {
             tag: HeaderValue::try_from(tag).ok()?,
@@ -70,23 +78,8 @@ impl Version {
 
 /// Which file this is. Some builds give every file one fixed time, and then a
 /// change that keeps the length shows only as a different file.
-fn identity(path: &Path) -> String {
-    match file_id::get_file_id(path) {
-        Ok(FileId::Inode {
-            device_id,
-            inode_number,
-        }) => format!("{device_id:x}.{inode_number:x}"),
-        Ok(FileId::LowRes {
-            volume_serial_number,
-            file_index,
-        }) => format!("{volume_serial_number:x}.{file_index:x}"),
-        Ok(FileId::HighRes {
-            volume_serial_number,
-            file_id,
-        }) => format!("{volume_serial_number:x}.{file_id:x}"),
-        // The size and the time still tell most changes apart.
-        Err(_) => "0".to_string(),
-    }
+pub(crate) fn identity(path: &Path) -> Option<FileId> {
+    file_id::get_file_id(path).ok()
 }
 
 fn without_weak_mark(tag: &str) -> &str {
@@ -168,5 +161,5 @@ fn file_version(root: &Path, path: &str) -> Option<Version> {
         return None;
     }
 
-    Version::of(&file, &metadata)
+    Version::of(identity(&file), &metadata)
 }

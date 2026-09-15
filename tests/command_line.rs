@@ -130,21 +130,21 @@ fn offers_localhost_when_listening_everywhere() {
     let dir = TempDir::new("everywhere");
     dir.write("index.html", "<html>hi</html>");
 
-    // 0.0.0.0 is not an address a browser can open.
+    // `0.0.0.0` is not an address a browser can open.
     let server = Server::start(dir.path(), &["--host", "0.0.0.0"]);
     assert!(server.said("localhost"));
     assert_eq!(get(server.port, "/").status, 200);
 }
 
-// Only Linux binds the whole of 127.0.0.0/8 without being asked.
+// Only Linux binds the whole of `127.0.0.0/8` without being asked.
 #[cfg(target_os = "linux")]
 #[test]
 fn offers_the_real_address_when_it_is_not_localhost() {
     let dir = TempDir::new("other-loopback");
     dir.write("index.html", "<html>hi</html>");
 
-    // 127.0.0.2 is loopback too, but nothing answers there under the name
-    // localhost, so the banner has to say 127.0.0.2.
+    // `127.0.0.2` is loopback too, but nothing answers there under the name
+    // localhost, so the banner has to say `127.0.0.2`.
     let server = Server::start(dir.path(), &["--host", "127.0.0.2"]);
     assert!(
         server.said("127.0.0.2"),
@@ -459,7 +459,7 @@ fn opens_an_address_a_browser_can_open() {
     std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755))
         .expect("could not make the browser runnable");
 
-    // 0.0.0.0 is not an address a browser can open; localhost is.
+    // `0.0.0.0` is not an address a browser can open; localhost is.
     let server = Server::start_in(
         dir.path(),
         &["--open", "--host", "0.0.0.0"],

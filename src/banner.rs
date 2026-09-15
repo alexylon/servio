@@ -136,10 +136,10 @@ pub(crate) fn url(bound: SocketAddr) -> String {
     format!("http://{}", authority(bound))
 }
 
-/// The host and port of that address. 0.0.0.0 and [::] mean every network
-/// interface, which a browser cannot open, so those become localhost. So do
-/// 127.0.0.1 and ::1, and nothing else: 127.0.0.2 is loopback too, but the
-/// name does not lead there.
+/// The host and port of that address. `0.0.0.0` and `::` mean every
+/// network interface, which a browser cannot open, so those become
+/// localhost. So do `127.0.0.1` and `::1`, and nothing else: `127.0.0.2` is
+/// loopback too, but the name does not lead there.
 fn authority(bound: SocketAddr) -> String {
     let ip = bound.ip();
     let is_localhost = ip.is_unspecified()

@@ -178,8 +178,9 @@ first look at the files is done.
 
 In a terminal, the banner is coloured, and its address is a link where the
 terminal supports one. Written to a file or read by another program, it is
-plain text. A `NO_COLOR` that is not empty leaves the colours out in a terminal
-too.
+plain text, and so it is in a terminal whose `TERM` is `dumb`, such as an Emacs
+shell, or, outside Windows, not set at all. A `NO_COLOR` that is not empty
+leaves the colours out in a terminal too.
 
 ## Live reload
 

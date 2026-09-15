@@ -20,7 +20,8 @@
 
 ### Fixed
 - The banner wrote the codes for its colours and its link into files and
-  pipes, where they are noise. It now writes them only to a terminal, and
+  pipes, where they are noise. It now writes them only to a terminal that
+  shows them, not to one whose `TERM` is `dumb` or, outside Windows, unset, and
   leaves the colours out when `NO_COLOR` is set
 - With `--cache-assets`, a file rolled back to an older copy, or changed twice
   within a second, was answered as unchanged, and the rest of a changed file

@@ -31,18 +31,44 @@ impl Style {
     fn for_stdout() -> Style {
         Style::new(
             std::io::stdout().is_terminal(),
+            std::env::var_os("TERM").as_deref(),
             std::env::var_os("NO_COLOR").as_deref(),
         )
     }
 
-    /// Only a terminal shows colours and links; in a file or a pipe their codes
-    /// are noise. A `NO_COLOR` that is not empty turns colour off in a terminal
-    /// too.
-    fn new(terminal: bool, no_color: Option<&OsStr>) -> Style {
+    /// Colours and links only for a terminal that shows them. In a file or a
+    /// pipe their codes are noise, and so they are in a terminal that calls
+    /// itself dumb, such as an Emacs shell, or outside Windows names no kind at
+    /// all. A `NO_COLOR` that is not empty turns colour off as well.
+    fn new(terminal: bool, term: Option<&OsStr>, no_color: Option<&OsStr>) -> Style {
+        let shows_codes = terminal
+            && match term {
+                Some(kind) => kind != "dumb",
+                // Terminals on Windows set no TERM.
+                None => cfg!(windows),
+            };
         let no_color = no_color.is_some_and(|value| !value.is_empty());
+
         Style {
-            colour: terminal && !no_color,
-            links: terminal,
+            colour: shows_codes && !no_color,
+            links: shows_codes,
+        }
+    }
+
+    fn row(self, label: &str, value: impl Display) {
+        if self.colour {
+            println!("  {label:<LABEL_WIDTH$}: {BLUE}{value}{RESET}");
+        } else {
+            println!("  {label:<LABEL_WIDTH$}: {value}");
+        }
+    }
+
+    /// Makes `text` a clickable link to `url` in terminals that support it.
+    fn link(self, url: &str, text: impl Display) -> String {
+        if self.links {
+            format!("{LINK_START}{url}{LINK_MID}{text}{LINK_END}")
+        } else {
+            text.to_string()
         }
     }
 }
@@ -59,21 +85,19 @@ pub(crate) fn print(
     let url = url(bound);
 
     println!("{RULE}");
-    row(style, "Serving", static_dir.display());
+    style.row("Serving", static_dir.display());
     if args.exact_port().is_none() && bound.port() != DEFAULT_PORT {
-        row(
-            style,
+        style.row(
             "Note",
             format!("port {DEFAULT_PORT} was busy, using {}", bound.port()),
         );
     }
-    row(style, "Live reload", live_reload(args));
+    style.row("Live reload", live_reload(args));
     if let Some(ignoring) = ignoring(&args.ignore, from_ignore_file) {
-        row(style, "Ignoring", ignoring);
+        style.row("Ignoring", ignoring);
     }
-    row(style, "Single-page app", on_off(args.spa));
-    row(
-        style,
+    style.row("Single-page app", on_off(args.spa));
+    style.row(
         "File lists",
         if args.lists() {
             "where a folder has no index.html, or with ?list"
@@ -81,8 +105,7 @@ pub(crate) fn print(
             "off"
         },
     );
-    row(
-        style,
+    style.row(
         "Caching",
         match args.caching() {
             Caching::Off => "off",
@@ -93,20 +116,18 @@ pub(crate) fn print(
         },
     );
     if no_app_page {
-        row(
-            style,
+        style.row(
             "Warning",
             format!("there is no {INDEX_FILE} here, so the app will not load"),
         );
     }
     if args.lists() && reachable_from_elsewhere(args.host) {
-        row(
-            style,
+        style.row(
             "Warning",
             "other devices can list the files here; --no-list turns that off",
         );
     }
-    row(style, "Open", hyperlink(style, &url, &authority));
+    style.row("Open", style.link(&url, &authority));
     println!("{RULE}\n");
 }
 
@@ -136,14 +157,6 @@ fn authority(bound: SocketAddr) -> String {
 /// as local.
 fn reachable_from_elsewhere(host: IpAddr) -> bool {
     !host.to_canonical().is_loopback()
-}
-
-fn row(style: Style, label: &str, value: impl Display) {
-    if style.colour {
-        println!("  {label:<LABEL_WIDTH$}: {BLUE}{value}{RESET}");
-    } else {
-        println!("  {label:<LABEL_WIDTH$}: {value}");
-    }
 }
 
 /// Worth saying when the server is looking at the files rather than being told
@@ -177,15 +190,6 @@ fn on_off(enabled: bool) -> &'static str {
     if enabled { "on" } else { "off" }
 }
 
-/// Makes `text` a clickable link to `url` in terminals that support it.
-fn hyperlink(style: Style, url: &str, text: impl Display) -> String {
-    if style.links {
-        format!("{LINK_START}{url}{LINK_MID}{text}{LINK_END}")
-    } else {
-        text.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,20 +207,34 @@ mod tests {
     }
 
     #[test]
-    fn only_a_terminal_gets_colour_and_links() {
-        let terminal = Style::new(true, None);
+    fn only_a_terminal_that_shows_codes_gets_colour_and_links() {
+        let xterm = Some(OsStr::new("xterm-256color"));
+
+        let terminal = Style::new(true, xterm, None);
         assert!(terminal.colour && terminal.links);
 
-        let elsewhere = Style::new(false, None);
+        let elsewhere = Style::new(false, xterm, None);
         assert!(!elsewhere.colour && !elsewhere.links);
+
+        let dumb = Style::new(true, Some(OsStr::new("dumb")), None);
+        assert!(!dumb.colour && !dumb.links);
+    }
+
+    #[test]
+    fn a_terminal_naming_no_kind_is_trusted_only_on_windows() {
+        let unnamed = Style::new(true, None, None);
+        assert_eq!(unnamed.colour, cfg!(windows));
+        assert_eq!(unnamed.links, cfg!(windows));
     }
 
     #[test]
     fn no_color_turns_colour_off_but_leaves_links_unless_it_is_empty() {
-        let set = Style::new(true, Some(OsStr::new("1")));
+        let xterm = Some(OsStr::new("xterm-256color"));
+
+        let set = Style::new(true, xterm, Some(OsStr::new("1")));
         assert!(!set.colour && set.links);
 
-        let empty = Style::new(true, Some(OsStr::new("")));
+        let empty = Style::new(true, xterm, Some(OsStr::new("")));
         assert!(empty.colour && empty.links);
     }
 

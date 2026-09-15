@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-15
+
 ### Added
 - A folder with no `index.html` shows the files in it, and `?list` added to any
   folder's address shows them where it has one. Folders come first, a folder's

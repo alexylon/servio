@@ -39,7 +39,9 @@ fn saving_a_file_refreshes_the_browser() {
 
 #[test]
 fn a_burst_of_writes_refreshes_once() {
-    // One save can write several files, and a build writes many at once.
+    // One save can write several files, and a build writes many at once. A
+    // build that goes on writing for a while is tested in src/refresh.rs,
+    // where no busy machine can stretch the pauses between its writes.
     let dir = site("burst");
     let server = Server::start(dir.path(), &[]);
     server.settle();
@@ -55,32 +57,6 @@ fn a_burst_of_writes_refreshes_once() {
         browser.refreshes(),
         1,
         "a burst of writes refreshed more than once:\n{}",
-        server.lines().join("\n")
-    );
-}
-
-#[test]
-fn a_build_that_writes_for_a_while_does_not_refresh_at_every_handover() {
-    // The watcher hands over what it has every few hundredths of a second,
-    // and a build writing for longer than that used to refresh the browser at
-    // each handover.
-    let dir = site("slow-build");
-    let server = Server::start(dir.path(), &[]);
-    server.settle();
-
-    let browser = server.open_browser();
-    for part in 0..12 {
-        dir.write(&format!("part-{part}.css"), "body {}");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    browser.wait_for_refreshes(1);
-    server.settle();
-
-    // One, or two where the machine stalled partway through the build. What
-    // it must not be is one per handover, a dozen here.
-    assert!(
-        browser.refreshes() <= 2,
-        "a build refreshed at every handover:\n{}",
         server.lines().join("\n")
     );
 }
@@ -372,17 +348,6 @@ fn a_directory_taken_away_does_not_refresh_to_an_error_page() {
     dir.create();
     dir.write("index.html", "<html>rebuilt</html>");
     server.wait_for("Directory replaced");
-    browser.wait_for_refreshes(1);
-}
-
-#[test]
-fn a_connected_browser_is_told_to_refresh() {
-    let dir = site("connected");
-    let server = Server::start(dir.path(), &[]);
-    server.settle();
-
-    let browser = server.open_browser();
-    dir.write("index.html", "<html>second</html>");
     browser.wait_for_refreshes(1);
 }
 

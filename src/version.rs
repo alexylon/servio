@@ -1,12 +1,14 @@
-//! Whether a browser's copy of a file is still current, told by the file's size
-//! and the time it was written, to the nanosecond where the disk keeps it. The
-//! file service compares whole seconds only, so it would answer a file rolled
-//! back to an older copy, or saved twice within a second, as unchanged.
+//! Whether a browser's copy of a file is still current, told by which file it
+//! is, its size and the time it was written, to the nanosecond where the disk
+//! keeps it. The file service compares whole seconds only, so it would answer a
+//! file rolled back to an older copy, or saved twice within a second, as
+//! unchanged.
 
 use crate::serve::INDEX_FILE;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use file_id::FileId;
 use http::{HeaderValue, Method, StatusCode, header};
 use percent_encoding::percent_decode_str;
 use std::fs::Metadata;
@@ -21,12 +23,13 @@ pub(crate) struct Version {
 
 impl Version {
     /// None where the system cannot say when the file was written.
-    pub(crate) fn of(metadata: &Metadata) -> Option<Version> {
+    pub(crate) fn of(path: &Path, metadata: &Metadata) -> Option<Version> {
         let written = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
         // Weak, since compression and the reload script change the bytes sent
         // without changing the file.
         let tag = format!(
-            "W/\"{:x}-{:x}.{:x}\"",
+            "W/\"{}-{:x}-{:x}.{:x}\"",
+            identity(path),
             metadata.len(),
             written.as_secs(),
             written.subsec_nanos()
@@ -62,6 +65,27 @@ impl Version {
             .and_then(|date| httpdate::parse_http_date(date).ok())
             .and_then(|date| date.duration_since(UNIX_EPOCH).ok())
             .is_some_and(|date| date.as_secs() == self.written_second)
+    }
+}
+
+/// Which file this is. Some builds give every file one fixed time, and then a
+/// change that keeps the length shows only as a different file.
+fn identity(path: &Path) -> String {
+    match file_id::get_file_id(path) {
+        Ok(FileId::Inode {
+            device_id,
+            inode_number,
+        }) => format!("{device_id:x}.{inode_number:x}"),
+        Ok(FileId::LowRes {
+            volume_serial_number,
+            file_index,
+        }) => format!("{volume_serial_number:x}.{file_index:x}"),
+        Ok(FileId::HighRes {
+            volume_serial_number,
+            file_id,
+        }) => format!("{volume_serial_number:x}.{file_id:x}"),
+        // The size and the time still tell most changes apart.
+        Err(_) => "0".to_string(),
     }
 }
 
@@ -144,5 +168,5 @@ fn file_version(root: &Path, path: &str) -> Option<Version> {
         return None;
     }
 
-    Version::of(&metadata)
+    Version::of(&file, &metadata)
 }

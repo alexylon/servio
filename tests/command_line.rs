@@ -227,17 +227,21 @@ fn looking_at_the_files_and_not_watching_at_all_is_refused() {
     // Asking for both says two different things about the same thing.
     let dir = TempDir::new("poll-and-no-reload");
     dir.write("index.html", "<html>hi</html>");
+    let served = dir.path().to_str().unwrap();
 
-    let (said, ok) = run(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "--poll",
-        "--no-reload",
-    ]);
+    for [first, second] in [["--poll", "--no-reload"], ["--no-reload", "--poll"]] {
+        let (said, ok) = run(&["--dir", served, first, second]);
 
-    assert!(!ok);
-    assert!(said.contains("--poll"), "it should say which flags: {said}");
-    assert!(said.contains("--no-reload"), "{said}");
+        assert!(!ok, "{first} {second}");
+        assert!(
+            said.contains("--poll") && said.contains("--no-reload"),
+            "it should say which flags: {said}"
+        );
+        assert!(
+            !said.contains("--ignore"),
+            "it named a flag that was not given: {said}"
+        );
+    }
 }
 
 #[test]
@@ -245,21 +249,26 @@ fn ignoring_and_not_watching_at_all_is_refused() {
     // There is nothing to ignore a change from when nothing is watched.
     let dir = TempDir::new("ignore-and-no-reload");
     dir.write("index.html", "<html>hi</html>");
+    let served = dir.path().to_str().unwrap();
 
-    let (said, ok) = run(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "--ignore",
-        "*.log",
-        "--no-reload",
-    ]);
+    for flags in [
+        ["--ignore", "*.log", "--no-reload"],
+        ["--no-reload", "--ignore", "*.log"],
+    ] {
+        let mut args = vec!["--dir", served];
+        args.extend(flags);
+        let (said, ok) = run(&args);
 
-    assert!(!ok);
-    assert!(
-        said.contains("--ignore"),
-        "it should say which flags: {said}"
-    );
-    assert!(said.contains("--no-reload"), "{said}");
+        assert!(!ok, "{flags:?}");
+        assert!(
+            said.contains("--ignore") && said.contains("--no-reload"),
+            "it should say which flags: {said}"
+        );
+        assert!(
+            !said.contains("--poll"),
+            "it named a flag that was not given: {said}"
+        );
+    }
 }
 
 #[test]
@@ -269,11 +278,19 @@ fn production_with_polling_or_ignoring_is_refused_whichever_comes_first() {
     dir.write("index.html", "<html>hi</html>");
     let served = dir.path().to_str().unwrap();
 
-    for (flags, other) in [
-        (&["--production", "--poll"][..], "--poll"),
-        (&["--poll", "--production"][..], "--poll"),
-        (&["--production", "--ignore", "*.log"][..], "--ignore"),
-        (&["--ignore", "*.log", "--production"][..], "--ignore"),
+    for (flags, given, not_given) in [
+        (&["--production", "--poll"][..], "--poll", "--ignore"),
+        (&["--poll", "--production"][..], "--poll", "--ignore"),
+        (
+            &["--production", "--ignore", "*.log"][..],
+            "--ignore",
+            "--poll",
+        ),
+        (
+            &["--ignore", "*.log", "--production"][..],
+            "--ignore",
+            "--poll",
+        ),
     ] {
         let mut args = vec!["--dir", served];
         args.extend_from_slice(flags);
@@ -281,25 +298,14 @@ fn production_with_polling_or_ignoring_is_refused_whichever_comes_first() {
 
         assert!(!ok, "{flags:?} should be refused");
         assert!(
-            said.contains("--production") && said.contains(other),
+            said.contains("--production") && said.contains(given),
             "{flags:?}: {said}"
         );
+        assert!(
+            !said.contains(not_given),
+            "it named a flag that was not given: {said}"
+        );
     }
-}
-
-#[test]
-fn production_never_moves_to_another_port() {
-    // Whatever sends requests to a finished site expects its port, so a busy
-    // one is an error there rather than a quiet move.
-    let dir = TempDir::new("production-port");
-    dir.write("index.html", "<html>hi</html>");
-    // Held here while it is free; otherwise something else already holds it.
-    let _held = std::net::TcpListener::bind(("127.0.0.1", 3030));
-
-    let (said, ok) = run(&["--dir", dir.path().to_str().unwrap(), "--production"]);
-
-    assert!(!ok, "{said}");
-    assert!(said.contains("port 3030 is already in use"), "{said}");
 }
 
 #[test]

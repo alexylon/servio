@@ -300,7 +300,7 @@ async fn read_page(index: &Path) -> std::io::Result<(Vec<u8>, Option<Version>)> 
         .metadata()
         .await
         .ok()
-        .and_then(|metadata| Version::of(&metadata));
+        .and_then(|metadata| Version::of(index, &metadata));
     let mut page = Vec::new();
     file.read_to_end(&mut page).await?;
 

@@ -13,15 +13,18 @@ use crate::errors::cannot_reach;
 use crate::listen::DEFAULT_PORT;
 use crate::serve::Caching;
 use anyhow::{Context, Result, bail};
-use clap::{ArgGroup, Parser};
+use clap::Parser;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use tower_livereload::LiveReloadLayer;
 
+/// The flags that turn watching off, which every flag about watching conflicts
+/// with.
+const TURN_WATCHING_OFF: [&str; 2] = ["no_reload", "production"];
+
 #[derive(Parser, Debug)]
-// "watching" holds the flags that mean something only while files are watched.
-#[command(author, version, about, group(ArgGroup::new("watching").multiple(true)))]
+#[command(author, version, about)]
 struct Args {
     /// Port to listen on [default: 3030, or the next free one, except with
     /// --production]
@@ -43,7 +46,7 @@ struct Args {
     /// Serve a finished site: no live reload, no file lists, no moving to another
     /// port, and browsers check kept files for changes, apart from those
     /// --cache-assets keeps
-    #[arg(long, conflicts_with = "watching")]
+    #[arg(long)]
     production: bool,
 
     /// Do not show file lists, not even with ?list
@@ -51,12 +54,12 @@ struct Args {
     no_list: bool,
 
     /// Do not watch for changes, and do not refresh the browser
-    #[arg(long, conflicts_with = "watching")]
+    #[arg(long)]
     no_reload: bool,
 
     /// Find changes by looking at the files, for a network or shared folder
     /// the system reports no changes in
-    #[arg(long, group = "watching")]
+    #[arg(long, conflicts_with_all = TURN_WATCHING_OFF)]
     poll: bool,
 
     /// Let browsers keep files under /assets/ for a year; only safe when a file
@@ -71,7 +74,7 @@ struct Args {
     /// Do not refresh the browser for a change matching this pattern, such as
     /// "*.log" or "cache"; may be given more than once, or kept one to a line
     /// in a .servioignore file in the served directory
-    #[arg(long, value_name = "PATTERN", group = "watching")]
+    #[arg(long, value_name = "PATTERN", conflicts_with_all = TURN_WATCHING_OFF)]
     ignore: Vec<String>,
 }
 
@@ -200,4 +203,26 @@ fn resolve_dir(path: &Path) -> Result<PathBuf> {
     absolute
         .canonicalize()
         .map_err(|error| cannot_reach(format!("cannot serve {}", absolute.display()), &error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_site_stays_on_its_port() {
+        let port = |line: &[&str]| {
+            Args::try_parse_from(line.iter().copied())
+                .expect("the arguments should parse")
+                .exact_port()
+        };
+
+        assert_eq!(port(&["servio"]), None);
+        assert_eq!(port(&["servio", "--port", "8080"]), Some(8080));
+        assert_eq!(port(&["servio", "--production"]), Some(DEFAULT_PORT));
+        assert_eq!(
+            port(&["servio", "--production", "--port", "8080"]),
+            Some(8080)
+        );
+    }
 }

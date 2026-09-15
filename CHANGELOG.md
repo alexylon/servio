@@ -25,10 +25,11 @@
   leaves the colours out when `NO_COLOR` is set
 - With `--cache-assets`, a file rolled back to an older copy, or changed twice
   within a second, was answered as unchanged, and the rest of a changed file
-  could be sent to finish an old copy. Each file now carries a tag made from its
-  size and the time it was written, to a fraction of a second, and a date alone
-  counts only when it names the same second. The page a single-page app answers
-  its routes with carries one too, so it is not sent again while it is unchanged
+  could be sent to finish an old copy. Each file now carries a tag made from
+  which file it is, its size and the time it was written, to a fraction of a
+  second, and a date alone counts only when it names the same second. The page a
+  single-page app answers its routes with carries one too, so it is not sent
+  again while it is unchanged
 - With `--cache-assets`, a page at a folder's own address under `/assets/`,
   such as `/assets/docs/`, was kept for a year, though a folder's name carries
   no hash
@@ -40,7 +41,7 @@
 - The Linux archives are static builds that run on any Linux:
   `servio-x86_64-unknown-linux-musl.tar.gz` and
   `servio-aarch64-unknown-linux-musl.tar.gz`. The `-gnu` archives, which needed
-  glibc 2.39 or newer, are no longer made
+  glibc 2.39 or newer from 0.6.0 on, are no longer made
 
 ### Security
 - An address starting with `//` that named a served folder, such as

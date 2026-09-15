@@ -261,6 +261,30 @@ fn a_file_changed_twice_within_a_second_is_sent_again() {
 }
 
 #[test]
+fn a_new_file_of_the_same_size_and_time_is_sent_again() {
+    // Some builds give every file one fixed time, so a change that keeps the
+    // length is told apart only by being a different file.
+    let dir = site("pinned-time");
+    let pinned = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    write_at(&dir, "index.html", "<html>release 1.2.3</html>", pinned);
+    let server = Server::start(dir.path(), &["--production"]);
+    let kept = get(server.port, "/");
+
+    // Written beside the page and moved over it, as a deploy does.
+    write_at(&dir, "next.html", "<html>release 1.2.4</html>", pinned);
+    std::fs::rename(dir.join("next.html"), dir.join("index.html"))
+        .expect("could not move the new page into place");
+
+    let checked = check(&server, "/", &kept);
+    assert_eq!(checked.status, 200);
+    assert!(
+        checked.text().contains("release 1.2.4"),
+        "{}",
+        checked.text()
+    );
+}
+
+#[test]
 fn a_copy_named_by_its_tag_is_not_sent_again() {
     let dir = site("tag");
     let server = Server::start(dir.path(), &["--production"]);

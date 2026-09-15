@@ -39,7 +39,7 @@ each system below, holding just the program. Running it needs no Rust.
 
 The Linux programs are static builds, so they run on any Linux, whatever C
 library it has. Releases up to 0.6.2 had `-gnu` archives instead, which need
-glibc 2.39 or newer.
+glibc 2.39 or newer from 0.6.0 on, and glibc 2.34 or newer before that.
 
 On Linux or macOS, download your archive and the `SHA256SUMS` file, which
 releases after 0.6.2 include. Check the archive against it, then put `servio`
@@ -320,9 +320,11 @@ What browsers may keep depends on two flags:
 With neither flag, servio sends `Cache-Control: no-store` and never answers
 that a file is unchanged, so an edit shows at once. Checked before each use is
 `no-cache`: the browser asks whether its copy changed, and a file that has not
-changed is not sent again. servio tells by the file's size and the time it was
-written, to a fraction of a second, so a file rolled back to an older copy is
-sent again too. A year is `public, max-age=31536000, immutable`.
+changed is not sent again. servio tells by which file it is, its size and the
+time it was written, to a fraction of a second, so a file rolled back to an
+older copy is sent again too. The one change it cannot see is a file rewritten
+in place with the same size and the same time, as when a build gives every file
+one fixed time. A year is `public, max-age=31536000, immutable`.
 
 Use `--cache-assets` only when the build gives a file under `/assets/` a new
 name whenever its contents change, such as `app-3f9a1c.js`. servio does not

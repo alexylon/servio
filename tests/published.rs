@@ -399,7 +399,15 @@ fn no_reload_stops_watching_altogether() {
     server.settle();
 
     dir.write("index.html", "<html>edited</html>");
-    server.expect_no_reload(0);
+    server.settle();
+
+    // Without live reload there is no browser to tell, so a watch left on
+    // would show only in what the server prints.
+    assert!(
+        !server.said("reloading"),
+        "the files were still watched:\n{}",
+        server.lines().join("\n")
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -173,19 +173,11 @@ impl Server {
         self.count(needle) > 0
     }
 
-    /// Every announcement that makes a connected browser refresh.
-    pub fn reloads(&self) -> usize {
-        self.count("File changed")
-            + self.count("Directory replaced")
-            + self.count("Directory back")
-            + self.count("Watching again")
-    }
-
-    pub fn wait_for_reloads(&self, wanted: usize) {
-        self.wait_until(
-            || self.reloads() >= wanted,
-            &format!("{wanted} reload(s), saw {}", self.reloads()),
-        );
+    /// Opens the site in a browser that counts the refreshes the server sends
+    /// it from now on. What the server prints is not a count of those: some
+    /// refreshes are made without a line.
+    pub fn open_browser(&self) -> Browser<'_> {
+        Browser::open(self)
     }
 
     pub fn wait_for(&self, needle: &str) {
@@ -213,24 +205,6 @@ impl Server {
         }
 
         panic!("waited for {wanted}:\n{}", self.lines().join("\n"));
-    }
-
-    /// Waits long enough for a reload to have been announced, then insists
-    /// none was.
-    pub fn expect_no_reload(&self, before: usize) {
-        self.expect_no_reload_within(before, SETTLE);
-    }
-
-    /// The same, where the server needs longer to have noticed at all: a poll
-    /// hears nothing until its next look.
-    pub fn expect_no_reload_within(&self, before: usize, patience: Duration) {
-        std::thread::sleep(patience);
-        assert_eq!(
-            self.reloads(),
-            before,
-            "nothing should have reloaded:\n{}",
-            self.lines().join("\n")
-        );
     }
 
     /// Gives the watcher, or whatever the last request had to say, a moment
@@ -324,36 +298,140 @@ pub fn request(port: u16, method: &str, path: &str, headers: &[(&str, &str)]) ->
     parse(&raw)
 }
 
-/// Holds a live reload connection open and reports whether the server asks it
-/// to refresh within `TIMEOUT`.
-pub fn watches_for_reload(port: u16) -> std::thread::JoinHandle<bool> {
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).expect("could not connect");
-    socket
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .unwrap();
-    socket
-        .write_all(
-            b"GET /_tower-livereload/event-stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-        )
-        .expect("could not send");
+/// What a page's script asks for to hear about refreshes.
+const EVENT_STREAM: &[u8] =
+    b"GET /_tower-livereload/event-stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
 
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut seen = Vec::new();
-        while Instant::now() < deadline {
-            let mut chunk = [0; 512];
+/// A page open in a browser, as far as refreshing goes: it listens for the
+/// server's refresh events and counts them. After each one it connects again,
+/// as the reloaded page would, and like that page it misses a refresh sent
+/// while it does.
+pub struct Browser<'a> {
+    server: &'a Server,
+    seen: Arc<Seen>,
+    listener: Option<std::thread::JoinHandle<()>>,
+}
+
+/// What the browser has heard, shared with the thread that listens.
+#[derive(Default)]
+struct Seen {
+    refreshes: AtomicUsize,
+    listening: AtomicBool,
+    closed: AtomicBool,
+}
+
+impl<'a> Browser<'a> {
+    fn open(server: &'a Server) -> Browser<'a> {
+        let seen = Arc::new(Seen::default());
+        let port = server.port;
+        let listener = std::thread::spawn({
+            let seen = Arc::clone(&seen);
+            move || listen(port, &seen)
+        });
+
+        let browser = Browser {
+            server,
+            seen,
+            listener: Some(listener),
+        };
+        // The server's first event means it will pass on the next refresh, so
+        // none is missed from here on.
+        server.wait_until(
+            || browser.listening(),
+            "the browser to listen for refreshes",
+        );
+        browser
+    }
+
+    pub fn refreshes(&self) -> usize {
+        self.seen.refreshes.load(Ordering::SeqCst)
+    }
+
+    fn listening(&self) -> bool {
+        self.seen.listening.load(Ordering::SeqCst)
+    }
+
+    /// Waits for this many refreshes in all, and for the browser to listen
+    /// again after the last.
+    pub fn wait_for_refreshes(&self, wanted: usize) {
+        self.server.wait_until(
+            || self.refreshes() >= wanted && self.listening(),
+            &format!("{wanted} refresh(es)"),
+        );
+    }
+
+    /// Waits long enough for a refresh to have come, then insists none came
+    /// since the browser was opened.
+    pub fn expect_no_refresh(&self) {
+        self.expect_no_refresh_within(SETTLE);
+    }
+
+    /// The same, where the server needs longer to have noticed at all: a poll
+    /// hears nothing until its next look.
+    pub fn expect_no_refresh_within(&self, patience: Duration) {
+        std::thread::sleep(patience);
+        assert_eq!(
+            self.refreshes(),
+            0,
+            "nothing should have refreshed:\n{}",
+            self.server.lines().join("\n")
+        );
+        // A server that stopped would send no refresh either, and pass.
+        assert!(
+            self.listening(),
+            "the browser stopped hearing from the server:\n{}",
+            self.server.lines().join("\n")
+        );
+    }
+}
+
+impl Drop for Browser<'_> {
+    fn drop(&mut self) {
+        self.seen.closed.store(true, Ordering::SeqCst);
+        if let Some(listener) = self.listener.take() {
+            let _ = listener.join();
+        }
+    }
+}
+
+/// Listens for the server's events until the browser is closed. The server
+/// ends the stream after each refresh, so this connects again every time.
+fn listen(port: u16, seen: &Seen) {
+    while !seen.closed.load(Ordering::SeqCst) {
+        let Ok(mut socket) = TcpStream::connect(("127.0.0.1", port)) else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        // Short, so a closed browser stops soon.
+        let _ = socket.set_read_timeout(Some(Duration::from_millis(100)));
+        if socket.write_all(EVENT_STREAM).is_err() {
+            continue;
+        }
+
+        let mut received = Vec::new();
+        let mut chunk = [0; 512];
+        while !seen.closed.load(Ordering::SeqCst) {
             match socket.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(read) => seen.extend_from_slice(&chunk[..read]),
-                Err(error) if would_block(&error) => continue, // simply quiet
-                Err(_) => break,                               // the connection broke
+                Ok(read) => received.extend_from_slice(&chunk[..read]),
+                Err(error) if would_block(&error) => continue,
+                Err(_) => break,
             }
-            if String::from_utf8_lossy(&seen).contains("event: reload") {
-                return true;
+
+            let events = String::from_utf8_lossy(&received);
+            if events.contains("event: reload") {
+                // Not listening first, so a test waiting for both never sees
+                // the new count while this connection still looks open.
+                seen.listening.store(false, Ordering::SeqCst);
+                seen.refreshes.fetch_add(1, Ordering::SeqCst);
+                break;
+            }
+            if events.contains("event: init") {
+                seen.listening.store(true, Ordering::SeqCst);
             }
         }
-        false
-    })
+        seen.listening.store(false, Ordering::SeqCst);
+    }
 }
 
 fn would_block(error: &std::io::Error) -> bool {

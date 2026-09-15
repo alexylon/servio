@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Server, TempDir, get, watches_for_reload};
+use common::{Server, TempDir, get};
 use std::time::{Duration, Instant};
 
 /// Long enough for a poll to have had a look, and for the debounce to have
@@ -32,9 +32,9 @@ fn saving_a_file_refreshes_the_browser() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -44,16 +44,16 @@ fn a_burst_of_writes_refreshes_once() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     for part in 0..5 {
         dir.write(&format!("part-{part}.css"), "body {}");
     }
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
     server.settle();
 
     assert_eq!(
-        server.reloads(),
-        before + 1,
+        browser.refreshes(),
+        1,
         "a burst of writes refreshed more than once:\n{}",
         server.lines().join("\n")
     );
@@ -68,18 +68,18 @@ fn a_build_that_writes_for_a_while_does_not_refresh_at_every_handover() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     for part in 0..12 {
         dir.write(&format!("part-{part}.css"), "body {}");
         std::thread::sleep(Duration::from_millis(50));
     }
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
     server.settle();
 
     // One, or two where the machine stalled partway through the build. What
     // it must not be is one per handover, a dozen here.
     assert!(
-        server.reloads() <= before + 2,
+        browser.refreshes() <= 2,
         "a build refreshed at every handover:\n{}",
         server.lines().join("\n")
     );
@@ -92,9 +92,9 @@ fn saving_a_file_refreshes_the_browser_while_polling() {
     let server = Server::start(dir.path(), &["--poll"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -106,11 +106,11 @@ fn while_polling_the_ignored_files_are_still_ignored() {
     let server = Server::start(dir.path(), &["--poll"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("index.html.swp", "vim");
     dir.write("node_modules/left-pad/index.js", "module.exports = 1");
 
-    server.expect_no_reload_within(before, A_LOOK);
+    browser.expect_no_refresh_within(A_LOOK);
 }
 
 #[cfg(unix)]
@@ -130,8 +130,8 @@ fn while_polling_a_path_it_cannot_read_is_not_a_broken_watch() {
     }
 
     let server = Server::start(dir.path(), &["--poll"]);
-    let before = server.reloads();
-    server.expect_no_reload_within(before, A_LOOK);
+    let browser = server.open_browser();
+    browser.expect_no_refresh_within(A_LOOK);
 
     // And it is worth saying once, by name, not once a second.
     assert_eq!(
@@ -147,9 +147,8 @@ fn while_polling_a_path_it_cannot_read_is_not_a_broken_watch() {
     );
 
     // What must not be lost: a real change is still found.
-    let before = server.reloads();
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[cfg(unix)]
@@ -167,8 +166,8 @@ fn while_polling_an_unreadable_path_the_browser_never_sees_is_not_worth_saying()
     }
 
     let server = Server::start(dir.path(), &["--poll"]);
-    let before = server.reloads();
-    server.expect_no_reload_within(before, A_LOOK);
+    let browser = server.open_browser();
+    browser.expect_no_refresh_within(A_LOOK);
 
     assert!(
         !server.said("Cannot"),
@@ -186,8 +185,8 @@ fn while_polling_a_link_that_leads_nowhere_is_not_a_fault() {
     std::os::unix::fs::symlink("/nowhere", dir.join("broken")).expect("could not link");
 
     let server = Server::start(dir.path(), &["--poll"]);
-    let before = server.reloads();
-    server.expect_no_reload_within(before, A_LOOK);
+    let browser = server.open_browser();
+    browser.expect_no_refresh_within(A_LOOK);
 
     assert!(
         !server.said("Cannot"),
@@ -215,9 +214,9 @@ fn while_polling_a_link_to_a_directory_above_is_not_a_walk_with_no_end() {
     );
 
     // And the look still finds a real change.
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -265,9 +264,9 @@ fn while_polling_a_second_save_in_the_same_second_still_refreshes() {
     let server = Server::start(dir.path(), &["--poll"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     save("body { color: blue }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -336,9 +335,9 @@ fn while_polling_a_directory_taken_away_does_not_refresh_to_an_error_page() {
     let server = Server::start(dir.path(), &["--poll"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.remove_all();
-    server.expect_no_reload_within(before, A_LOOK);
+    browser.expect_no_refresh_within(A_LOOK);
     assert!(
         !server.said("File changed"),
         "a directory taken away was called a change:\n{}",
@@ -349,7 +348,7 @@ fn while_polling_a_directory_taken_away_does_not_refresh_to_an_error_page() {
     dir.create();
     dir.write("index.html", "<html>rebuilt</html>");
     server.wait_for("Directory replaced");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -360,9 +359,9 @@ fn a_directory_taken_away_does_not_refresh_to_an_error_page() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.remove_all();
-    server.expect_no_reload_within(before, A_LOOK);
+    browser.expect_no_refresh_within(A_LOOK);
     assert!(
         !server.said("File changed"),
         "a directory taken away was called a change:\n{}",
@@ -373,7 +372,7 @@ fn a_directory_taken_away_does_not_refresh_to_an_error_page() {
     dir.create();
     dir.write("index.html", "<html>rebuilt</html>");
     server.wait_for("Directory replaced");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -382,14 +381,9 @@ fn a_connected_browser_is_told_to_refresh() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let listening = watches_for_reload(server.port);
-    std::thread::sleep(Duration::from_millis(300));
+    let browser = server.open_browser();
     dir.write("index.html", "<html>second</html>");
-
-    assert!(
-        listening.join().unwrap(),
-        "the browser was never told to refresh"
-    );
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -400,13 +394,13 @@ fn serving_a_page_does_not_refresh_it() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     for _ in 0..20 {
         assert_eq!(get(server.port, "/").status, 200);
         assert_eq!(get(server.port, "/app.css").status, 200);
     }
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 }
 
 #[test]
@@ -415,7 +409,7 @@ fn editor_scratch_files_are_ignored() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("index.html.swp", "vim");
     dir.write("index.html~", "backup");
     dir.write("#index.html#", "emacs");
@@ -423,7 +417,7 @@ fn editor_scratch_files_are_ignored() {
     dir.write(".git/HEAD", "ref: refs/heads/main");
     dir.write("node_modules/left-pad/index.js", "module.exports = 1");
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 }
 
 #[test]
@@ -436,16 +430,16 @@ fn a_change_matching_an_ignore_pattern_does_not_refresh() {
     let server = Server::start(dir.path(), &["--ignore", "*.log", "--ignore", "cache"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("build.log", "compiled");
     dir.write("out/build.log", "compiled");
     dir.write("cache/pages/index.html", "<html>cached</html>");
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 
     // Everything else still does.
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -455,17 +449,17 @@ fn the_ignore_file_in_the_served_directory_is_read() {
     let server = Server::start(dir.path(), &["--ignore", "*.map"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("build.log", "compiled");
     dir.write("cache/pages/index.html", "<html>cached</html>");
     dir.write("app.css.map", "{}");
     // The file itself is hidden, so editing it does not refresh either.
     dir.write(".servioignore", "*.log\n");
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -474,12 +468,12 @@ fn a_change_matching_an_ignore_pattern_does_not_refresh_while_polling() {
     let server = Server::start(dir.path(), &["--poll", "--ignore", "*.log"]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("build.log", "compiled");
-    server.expect_no_reload_within(before, A_LOOK);
+    browser.expect_no_refresh_within(A_LOOK);
 
     dir.write("app.css", "body { color: red }");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -490,12 +484,12 @@ fn files_that_are_never_served_do_not_refresh() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write(".idea/workspace.xml", "<project/>");
     dir.write(".vscode/settings.json", "{}");
     dir.write(".env", "API_KEY=secret");
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 }
 
 #[test]
@@ -504,9 +498,9 @@ fn changes_the_web_can_reach_still_refresh() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write(".well-known/token", "public");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
 }
 
 // Linux only. macOS reports the changes to a file as one running total, so a
@@ -519,11 +513,11 @@ fn changing_only_permissions_does_not_refresh() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     set_permissions(&dir, 0o600);
     set_permissions(&dir, 0o644);
 
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 }
 
 #[test]
@@ -540,9 +534,9 @@ fn survives_a_build_that_replaces_the_directory() {
     server.wait_for("Directory replaced");
     server.settle();
 
-    let after_rebuild = server.reloads();
+    let browser = server.open_browser();
     dir.write("index.html", "<html>edited after the rebuild</html>");
-    server.wait_for_reloads(after_rebuild + 1);
+    browser.wait_for_refreshes(1);
 }
 
 #[test]
@@ -560,9 +554,9 @@ fn survives_a_build_that_renames_the_directory_away() {
     server.settle();
 
     // The old directory is no longer the site, so changes there mean nothing.
-    let after_rename = server.reloads();
+    let browser = server.open_browser();
     std::fs::write(moved.join("index.html"), "<html>stale</html>").unwrap();
-    server.expect_no_reload(after_rename);
+    browser.expect_no_refresh();
 }
 
 #[test]
@@ -610,7 +604,7 @@ fn moved_aside_and_back(args: &[&str]) {
     let server = Server::start(dir.path(), args);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     std::fs::rename(dir.path(), &aside).expect("could not move the directory aside");
     std::fs::write(aside.join("index.html"), "<html>worked on</html>")
         .expect("could not write the test file");
@@ -618,7 +612,7 @@ fn moved_aside_and_back(args: &[&str]) {
     std::fs::rename(&aside, dir.path()).expect("could not move the directory back");
 
     server.wait_for("Directory back");
-    server.wait_for_reloads(before + 1);
+    browser.wait_for_refreshes(1);
     assert!(get(server.port, "/").text().contains("worked on"));
 }
 
@@ -644,7 +638,7 @@ fn a_file_that_is_written_without_pause_does_not_hold_the_refresh_back_for_long(
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     let writing_since = Instant::now();
     while writing_since.elapsed() < Duration::from_millis(2500) {
         dir.write("log.txt", &format!("{:?}", writing_since.elapsed()));
@@ -653,7 +647,7 @@ fn a_file_that_is_written_without_pause_does_not_hold_the_refresh_back_for_long(
     server.settle();
 
     assert!(
-        server.reloads() >= before + 2,
+        browser.refreshes() >= 2,
         "a file written without pause held the refresh back:\n{}",
         server.lines().join("\n")
     );

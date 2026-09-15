@@ -406,9 +406,9 @@ fn a_mark_at_the_start_of_the_ignore_file_is_not_part_of_a_pattern() {
     let server = Server::start(dir.path(), &[]);
     server.settle();
 
-    let before = server.reloads();
+    let browser = server.open_browser();
     dir.write("build.log", "compiled");
-    server.expect_no_reload(before);
+    browser.expect_no_refresh();
 }
 
 #[test]

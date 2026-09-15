@@ -1,5 +1,6 @@
-# cargo-release, in this order: version, changelog, tests, commit, publish,
-# tag, push.
+# cargo-release on this machine, in this order: version, changelog, tests,
+# commit, tag, push. The tag starts the release workflow, which checks, builds
+# and publishes.
 # Reference: https://rust-lang.github.io/cargo-release/
 
 pre-release-commit-message = "Release {{version}}"
@@ -7,16 +8,13 @@ pre-release-commit-message = "Release {{version}}"
 tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
 
-publish = true
+# The release workflow publishes, once every check on the tagged commit passes.
+publish = false
 
 push = true
 push-remote = "origin"
 
 consolidate-commits = false
-
-# While publishing, Cargo builds the crate as packaged before uploading it. That
-# build runs no tests; the hook below runs them, on the source.
-verify = true
 
 # The tests, before the release commit; a failure stops the release. They build
 # in their own directory: packaging leaves a copy of the crate in target/package,

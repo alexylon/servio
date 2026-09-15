@@ -1,12 +1,20 @@
 # Releasing
 
-This project uses [cargo-release](https://rust-lang.github.io/cargo-release/).
-The settings are in `release.toml`. The order of the steps below was checked
-with cargo-release 0.25.22; check it again after upgrading.
+cargo-release makes a release on your machine, and the release workflow checks,
+builds and publishes it. The settings are in `release.toml` and
+`.github/workflows/release.yml`. The order of the steps on your machine was
+checked with cargo-release 0.25.22; check it again after upgrading.
 
 ```bash
 cargo install cargo-release
 ```
+
+## Once, before the first release from the workflow
+
+The workflow publishes to crates.io with a token it is given for each run, so
+no token is stored anywhere. crates.io has to trust the workflow first: in
+servio's settings there, under Trusted Publishing, add GitHub with the owner
+`alexylon`, the repository `servio` and the workflow `release.yml`.
 
 ## Making a release
 
@@ -28,19 +36,25 @@ That one command, in this order:
 1. Sets the new version in `Cargo.toml` and `Cargo.lock`
 2. Moves everything under `## [Unreleased]` in `CHANGELOG.md` into a section
    for the new version, dated today
-3. Runs the tests on the source, and stops if any fail
+3. Runs the tests, and stops if any fail
 4. Commits as `Release X.Y.Z`
-5. Publishes to crates.io. Before uploading, Cargo builds the crate as it was
-   packaged; that build runs no tests
-6. Tags `vX.Y.Z`, once publishing has worked
-7. Pushes the commit and the tag
+5. Tags `vX.Y.Z`
+6. Pushes the commit and the tag
 
-Pushing the tag starts `.github/workflows/release.yml`. It runs the tests on
-Linux, macOS and Windows, and only if they all pass builds binaries for Linux
-(x86-64 and arm64), macOS (Intel and Apple silicon) and Windows, and attaches
-them to a GitHub release with their checksums in `SHA256SUMS`. The crate is on
-crates.io by then, so failing tests there hold back the binaries, not the
-crate.
+It prints `Publishing servio` on the way, but packages and uploads nothing:
+publishing is the workflow's job.
+
+The tag starts `.github/workflows/release.yml`, which:
+
+1. Runs every check a push gets on the tagged commit, and checks that the tag
+   names the version in `Cargo.toml`
+2. Builds the programs for Linux (x86-64 and arm64), macOS (Intel and Apple
+   silicon) and Windows
+3. Publishes the crate to crates.io
+4. Creates a GitHub release with the archives and their checksums in
+   `SHA256SUMS`
+
+Nothing reaches crates.io unless every check and build has passed.
 
 Say `patch` for a fix, `minor` for a new flag or a new behaviour, and `major`
 for anything that changes what an existing command already does. On its own,
@@ -49,30 +63,22 @@ for anything that changes what an existing command already does. On its own,
 ## Before you start
 
 - Everything committed: `git status`
-- The tests pass: `cargo test`
-- Formatted: `cargo fmt --check`
-- Signed in to crates.io: `cargo login`
+- Formatted and clean for Clippy: `cargo fmt --check` and
+  `cargo clippy --all-targets -- -D warnings`
 - Anything worth reading about is under `## [Unreleased]` in `CHANGELOG.md`.
   Nothing writes that for you.
+
+The tests need no run of their own: the release runs them.
 
 ## Doing less than all of it
 
 ```bash
-cargo release patch --execute --no-publish   # skip crates.io
-cargo release patch --execute --no-push      # keep it local
+cargo release patch --execute --no-push   # commit and tag, but keep them here
 ```
 
 ## If it goes wrong
 
-First see how far it got:
-
-```bash
-git log -1 --oneline           # is the last commit "Release X.Y.Z"?
-git status --short             # is anything left uncommitted?
-cargo search servio --limit 1  # the newest version on crates.io
-```
-
-Before anything was pushed:
+On your machine, before anything was pushed:
 
 - There is no release commit, and `Cargo.toml`, `Cargo.lock` and
   `CHANGELOG.md` are left changed: the tests stopped the release. Put those
@@ -82,42 +88,36 @@ Before anything was pushed:
   git checkout -- Cargo.toml Cargo.lock CHANGELOG.md
   ```
 
-- The last commit is `Release X.Y.Z`, nothing else is uncommitted, and X.Y.Z is
-  not on crates.io. Undo the commit, and the tag if there is one:
+- The last commit is `Release X.Y.Z`, and nothing else is uncommitted. Undo the
+  tag and the commit:
 
   ```bash
-  git reset --hard HEAD~1
   git tag -d vX.Y.Z
+  git reset --hard HEAD~1
   ```
 
-  Only when the last commit is the release commit: otherwise this throws away
-  a commit of your own.
+  Only when `git log -1 --oneline` shows the release commit: otherwise this
+  throws away a commit of your own.
 
-- X.Y.Z is on crates.io, but the tag or the push is missing. Keep the commit
-  and do only the steps that are left, not the whole release again:
+In the release workflow, after the push:
+
+- A job failed by chance, such as a download that timed out: open the run on
+  the Actions page and choose to re-run the failed jobs, not all of them, since
+  publishing the same version twice fails.
+- A check, the version check or a build failed for a real reason: nothing was
+  published. Fix it in a new commit, push it, and move the tag to it. Pushing
+  the moved tag starts the workflow again:
 
   ```bash
-  cargo release tag --execute
-  cargo release push --execute
+  git push origin HEAD
+  git tag -f -a vX.Y.Z -m "Release X.Y.Z"
+  git push -f origin vX.Y.Z
   ```
 
-  The tag step skips a tag that already exists, and says no packages were
-  selected. If there is one, check that `git log -1 --oneline vX.Y.Z` shows
-  the release commit, then run the push step.
-
-After the tag was pushed:
-
-- If a build failed, or a test failed by chance, run the failed jobs again from
-  the Actions page; the tag can stay. A test that fails for a real reason means
-  the crate on crates.io has the same fault: fix it and release the next patch.
-- To take the tag back:
-
-  ```bash
-  git push origin :refs/tags/vX.Y.Z
-  ```
-
-  That does not take the crate off crates.io, or back from anyone who already
-  downloaded a binary.
+- Publishing failed because crates.io does not trust the workflow yet: do the
+  step at the top, then re-run the failed jobs.
+- The crate is on crates.io but the GitHub release failed: re-run the failed
+  jobs. Leave the tag where it is, since the crate came from that commit.
 
 A version on crates.io cannot be deleted. It can only be yanked, which stops
 new projects from picking it up:

@@ -4,6 +4,10 @@ An HTTP server for static files, with live reload, built with Axum. While you
 work on a site, files are not cached and the browser refreshes when they
 change. `--production` serves the finished site instead.
 
+Changes on the main branch reach crates.io and the prebuilt programs at the
+next release. Until then, [CHANGELOG.md](CHANGELOG.md) lists them under
+Unreleased.
+
 ## Features
 
 - Live reload, debounced by 200 ms

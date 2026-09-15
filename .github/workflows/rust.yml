@@ -5,6 +5,8 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  # The release workflow runs these same checks on the tagged commit.
+  workflow_call:
 
 # Nothing here writes to the repository; only the release workflow does.
 permissions:

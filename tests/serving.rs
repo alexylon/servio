@@ -50,6 +50,7 @@ fn nothing_is_cached() {
             Some("no-store"),
             "for {path}"
         );
+        assert_eq!(response.header("etag"), None, "for {path}");
     }
 }
 

@@ -851,6 +851,7 @@ dependencies = [
  "file-id",
  "globset",
  "http",
+ "httpdate",
  "notify-debouncer-full",
  "open",
  "percent-encoding",

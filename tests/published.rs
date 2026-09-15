@@ -3,13 +3,35 @@
 
 mod common;
 
-use common::{PAGE, Server, TempDir, get, get_page, request};
+use common::{PAGE, Response, Server, TempDir, get, get_page, request};
+use std::time::{Duration, SystemTime};
 
 fn site(name: &str) -> TempDir {
     let dir = TempDir::new(name);
     dir.write("index.html", "<html>the app</html>");
     dir.write("assets/app-abc123.css", "body {}");
     dir
+}
+
+/// Writes a file and sets the time it says it was written.
+fn write_at(dir: &TempDir, relative: &str, contents: &str, written: SystemTime) {
+    dir.write(relative, contents);
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join(relative))
+        .and_then(|file| file.set_modified(written))
+        .expect("could not set when the file was written");
+}
+
+/// What a browser sends to check a copy it kept.
+fn check(server: &Server, address: &str, kept: &Response) -> Response {
+    let mut headers = vec![("Accept", PAGE)];
+    headers.extend(kept.header("etag").map(|tag| ("If-None-Match", tag)));
+    headers.extend(
+        kept.header("last-modified")
+            .map(|date| ("If-Modified-Since", date)),
+    );
+    request(server.port, "GET", address, &headers)
 }
 
 #[test]
@@ -221,6 +243,135 @@ fn with_production_an_unchanged_file_is_not_sent_again() {
     assert_eq!(response.status, 304);
     assert!(response.body.is_empty());
     assert_eq!(response.header("cache-control"), Some("no-cache"));
+}
+
+#[test]
+fn a_file_rolled_back_to_an_older_copy_is_sent_again() {
+    // A rollback by `rsync -a` or `tar x` brings the older file back with its
+    // older date, which a check by date alone takes for no change.
+    let dir = site("rollback");
+    let now = SystemTime::now();
+    write_at(&dir, "index.html", "<html>version 2</html>", now);
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let kept = get(server.port, "/");
+    write_at(
+        &dir,
+        "index.html",
+        "<html>version 1</html>",
+        now - Duration::from_secs(3600),
+    );
+
+    let checked = check(&server, "/", &kept);
+    assert_eq!(checked.status, 200);
+    assert!(checked.text().contains("version 1"), "{}", checked.text());
+
+    // Asked by date alone, only the very same second counts as unchanged.
+    let date = kept.header("last-modified").expect("no date to check with");
+    let by_date = request(server.port, "GET", "/", &[("If-Modified-Since", date)]);
+    assert_eq!(by_date.status, 200);
+}
+
+#[test]
+fn a_file_changed_twice_within_a_second_is_sent_again() {
+    let dir = site("same-second");
+    let second = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+    write_at(
+        &dir,
+        "index.html",
+        "<html>first</html>",
+        second + Duration::from_millis(100),
+    );
+
+    // A disk that keeps whole seconds cannot tell the two apart.
+    let written = std::fs::metadata(dir.join("index.html")).and_then(|file| file.modified());
+    if written.is_ok_and(|written| written == second) {
+        return;
+    }
+
+    let server = Server::start(dir.path(), &["--production"]);
+    let kept = get(server.port, "/");
+
+    // As long as the first, and in the same second.
+    write_at(
+        &dir,
+        "index.html",
+        "<html>again</html>",
+        second + Duration::from_millis(600),
+    );
+
+    let checked = check(&server, "/", &kept);
+    assert_eq!(checked.status, 200);
+    assert!(checked.text().contains("again"), "{}", checked.text());
+}
+
+#[test]
+fn a_copy_named_by_its_tag_is_not_sent_again() {
+    let dir = site("tag");
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let kept = get(server.port, "/assets/app-abc123.css");
+    let tag = kept.header("etag").expect("no tag to check with");
+    let checked = request(
+        server.port,
+        "GET",
+        "/assets/app-abc123.css",
+        &[("If-None-Match", tag)],
+    );
+
+    assert_eq!(checked.status, 304);
+    assert!(checked.body.is_empty());
+    assert_eq!(checked.header("etag"), Some(tag));
+    assert_eq!(checked.header("cache-control"), Some("no-cache"));
+}
+
+#[test]
+fn the_rest_of_a_file_that_changed_is_sent_whole() {
+    // A browser resuming a download asks for the rest only of the file it
+    // began with.
+    let dir = site("if-range");
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let kept = get(server.port, "/assets/app-abc123.css");
+    let date = kept
+        .header("last-modified")
+        .expect("no date to check with")
+        .to_string();
+    let rest = [("Range", "bytes=4-"), ("If-Range", date.as_str())];
+    assert_eq!(
+        request(server.port, "GET", "/assets/app-abc123.css", &rest).status,
+        206
+    );
+
+    write_at(
+        &dir,
+        "assets/app-abc123.css",
+        "main { color: red }",
+        SystemTime::now() + Duration::from_secs(5),
+    );
+    let changed = request(server.port, "GET", "/assets/app-abc123.css", &rest);
+    assert_eq!(changed.status, 200);
+    assert_eq!(changed.text(), "main { color: red }");
+}
+
+#[test]
+fn with_production_a_route_is_not_sent_the_app_again_while_it_is_unchanged() {
+    let dir = site("app-version");
+    let server = Server::start(dir.path(), &["--production", "--spa"]);
+
+    let kept = get_page(server.port, "/users/123");
+    assert!(kept.text().contains("the app"));
+    assert_eq!(check(&server, "/users/123", &kept).status, 304);
+
+    write_at(
+        &dir,
+        "index.html",
+        "<html>the new app</html>",
+        SystemTime::now() + Duration::from_secs(5),
+    );
+    let changed = check(&server, "/users/123", &kept);
+    assert_eq!(changed.status, 200);
+    assert!(changed.text().contains("the new app"));
 }
 
 #[test]

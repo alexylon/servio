@@ -313,7 +313,9 @@ What browsers may keep depends on two flags:
 With neither flag, servio sends `Cache-Control: no-store` and never answers
 that a file is unchanged, so an edit shows at once. Checked before each use is
 `no-cache`: the browser asks whether its copy changed, and a file that has not
-changed is not sent again. A year is `public, max-age=31536000, immutable`.
+changed is not sent again. servio tells by the file's size and the time it was
+written, to a fraction of a second, so a file rolled back to an older copy is
+sent again too. A year is `public, max-age=31536000, immutable`.
 
 Use `--cache-assets` only when the build gives a file under `/assets/` a new
 name whenever its contents change, such as `app-3f9a1c.js`. servio does not

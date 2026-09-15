@@ -6,6 +6,7 @@ mod ignore;
 mod list;
 mod listen;
 mod serve;
+mod version;
 mod watch;
 
 use crate::errors::cannot_reach;

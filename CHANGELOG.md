@@ -21,6 +21,12 @@
 - The banner wrote the codes for its colours and its link into files and
   pipes, where they are noise. It now writes them only to a terminal, and
   leaves the colours out when `NO_COLOR` is set
+- With `--cache-assets`, a file rolled back to an older copy, or changed twice
+  within a second, was answered as unchanged, and the rest of a changed file
+  could be sent to finish an old copy. Each file now carries a tag made from its
+  size and the time it was written, to a fraction of a second, and a date alone
+  counts only when it names the same second. The page a single-page app answers
+  its routes with carries one too, so it is not sent again while it is unchanged
 - With `--cache-assets`, a page at a folder's own address under `/assets/`,
   such as `/assets/docs/`, was kept for a year, though a folder's name carries
   no hash

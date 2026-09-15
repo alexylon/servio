@@ -36,6 +36,9 @@ globset = "0.4"
 # Decodes addresses and encodes links as the file service does; tower-http
 # already uses it.
 percent-encoding = "2"
+# Reads the dates browsers send back when they check a copy; tower-http already
+# uses it.
+httpdate = "1"
 
 [profile.release]
 lto = true

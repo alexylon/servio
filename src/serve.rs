@@ -4,6 +4,7 @@ use crate::guard::{
     may_be_served, refuse_hidden_files, refuse_index_pages_outside, refuse_paths_outside,
 };
 use crate::list::serve_file_list;
+use crate::version::{Version, answer_by_version};
 use axum::Router;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
@@ -13,6 +14,7 @@ use http::{HeaderName, HeaderValue, StatusCode, Uri, header};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
@@ -45,8 +47,9 @@ const CHECK_BEFORE_USE: &str = "no-cache";
 
 /// The file service and the layers around it. Each layer added wraps the ones
 /// before it, and the order matters:
-/// - the index.html check sits right next to the file service, so `?list`
-///   never reaches it;
+/// - version checks sit right next to the file service, inside every refusal,
+///   so nothing refused is ever answered as unchanged;
+/// - the index.html check sits just outside them, so `?list` never reaches it;
 /// - the refusals sit inside the headers, so a refusal gets the same headers;
 /// - the app shell and file lists sit inside live reload, so their pages get
 ///   the reload script;
@@ -63,6 +66,15 @@ pub(crate) fn app(
     no_app_page: bool,
 ) -> Router {
     let mut app = Router::new().fallback_service(ServeDir::new(static_dir));
+
+    // With nothing kept, there is no copy to ask about.
+    let checks_versions = !matches!(caching, Caching::Off);
+    if checks_versions {
+        let root = static_dir.to_path_buf();
+        app = app.layer(middleware::from_fn(move |request, next| {
+            answer_by_version(root.clone(), request, next)
+        }));
+    }
 
     let root = static_dir.to_path_buf();
     app = app.layer(middleware::from_fn(move |request, next| {
@@ -81,6 +93,7 @@ pub(crate) fn app(
                 root.clone(),
                 index.clone(),
                 Arc::clone(&missing),
+                checks_versions,
                 request,
                 next,
             )
@@ -158,9 +171,11 @@ async fn serve_app_shell(
     root: PathBuf,
     index: PathBuf,
     missing: Arc<Mutex<bool>>,
+    checks_versions: bool,
     request: Request,
     next: Next,
 ) -> Response {
+    let if_none_match = request.headers().get(header::IF_NONE_MATCH).cloned();
     let wants_page = request
         .headers()
         .get(header::ACCEPT)
@@ -190,7 +205,7 @@ async fn serve_app_shell(
     // looked, leaving the page down as gone while it is there.
     let mut missing = missing.lock().await;
     let page = if may_be_served(&root, &index) {
-        tokio::fs::read(&index).await.map_err(|error| {
+        read_page(&index).await.map_err(|error| {
             if error.kind() == ErrorKind::NotFound {
                 "is gone"
             } else {
@@ -203,10 +218,24 @@ async fn serve_app_shell(
     };
 
     match page {
-        Ok(page) => {
+        Ok((page, version)) => {
             // Back again, so the next time it goes is worth saying.
             *missing = false;
-            ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], page).into_response()
+
+            // The page is the same at every route, so a copy kept for one is
+            // current as long as index.html is.
+            let html = HeaderValue::from_static("text/html; charset=utf-8");
+            match version.filter(|_| checks_versions) {
+                Some(version) if if_none_match.is_some_and(|tags| version.is_named_in(&tags)) => {
+                    (StatusCode::NOT_MODIFIED, [(header::ETAG, version.tag())]).into_response()
+                }
+                Some(version) => (
+                    [(header::CONTENT_TYPE, html), (header::ETAG, version.tag())],
+                    page,
+                )
+                    .into_response(),
+                None => ([(header::CONTENT_TYPE, html)], page).into_response(),
+            }
         }
         // The 404 stands, but say why: the banner looked only at startup, so
         // a build that clears the directory takes the page away with nobody
@@ -262,6 +291,20 @@ async fn keep_assets(request: Request, next: Next) -> Response {
     );
 
     response
+}
+
+/// The page, and its version as it was read, from one opening of the file.
+async fn read_page(index: &Path) -> std::io::Result<(Vec<u8>, Option<Version>)> {
+    let mut file = tokio::fs::File::open(index).await?;
+    let version = file
+        .metadata()
+        .await
+        .ok()
+        .and_then(|metadata| Version::of(&metadata));
+    let mut page = Vec::new();
+    file.read_to_end(&mut page).await?;
+
+    Ok((page, version))
 }
 
 /// Whether the app page can be served. An unreadable page, or a link the

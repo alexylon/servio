@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{Server, TIMEOUT, TempDir, get, watches_for_reload};
+use common::{Server, TempDir, get, watches_for_reload};
 use std::time::{Duration, Instant};
 
 /// Long enough for a poll to have had a look, and for the debounce to have
@@ -680,7 +680,7 @@ fn a_rebuild_with_a_directory_it_may_not_read_says_so_rather_than_going_quiet() 
     std::fs::rename(next.path(), dir.path()).expect("could not move the directory into place");
     let locked = dir.join("locked");
 
-    let deadline = Instant::now() + TIMEOUT;
+    let deadline = Instant::now() + common::TIMEOUT;
     while !server.said("Cannot watch locked") && !server.said("Directory replaced") {
         assert!(
             Instant::now() < deadline,

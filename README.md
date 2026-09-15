@@ -3,7 +3,7 @@
 servio serves a website directly from a folder on your computer. While you
 work, it automatically refreshes open pages when files change and tells
 browsers not to store copies of your files. Use `--production` to serve a
-finished site.
+site in production.
 
 Changes on the main branch become available on crates.io and in the downloads
 with the next release. Until then, [CHANGELOG.md](CHANGELOG.md) lists them
@@ -14,7 +14,7 @@ under Unreleased. To try changes before they are released,
 
 - Automatic browser refresh, called live reload, with file changes grouped
   over 200 milliseconds to reduce repeated refreshes
-- A production mode for serving finished sites
+- A mode for serving sites in production
 - Smaller downloads through Gzip and Brotli compression
 - Support for single-page apps that handle navigation in the browser
 - Browsable file lists, including for folders that have an `index.html`
@@ -141,7 +141,7 @@ computer's network address, such as `http://192.168.1.20:3030`. Pages still
 refresh when files change. `--no-list` hides the folder contents from browsing;
 individual files remain accessible by their addresses.
 
-### Serving a finished site
+### Serving a site in production
 
 ```bash
 servio --dir site_public --port 3030 --production
@@ -164,7 +164,7 @@ forwarding server running there.
 # While working on the app
 servio --dir dist --spa
 
-# The finished app, with file names under /assets/ that change on each update
+# The app in production, with file names under /assets/ that change on each update
 servio --dir dist --port 3030 --production --spa --cache-assets
 ```
 

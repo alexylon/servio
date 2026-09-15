@@ -10,22 +10,21 @@ mod version;
 mod watch;
 
 use crate::errors::cannot_reach;
+use crate::listen::DEFAULT_PORT;
 use crate::serve::Caching;
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use tower_livereload::LiveReloadLayer;
 
 #[derive(Parser, Debug)]
-#[command(
-    author,
-    version,
-    about = "HTTP server for static files, with live reload for local development and a production mode for finished sites"
-)]
+// "watching" holds the flags that mean something only while files are watched.
+#[command(author, version, about, group(ArgGroup::new("watching").multiple(true)))]
 struct Args {
-    /// Port to listen on [default: 3030, or the next free one]
+    /// Port to listen on [default: 3030, or the next free one, except with
+    /// --production]
     #[arg(short, long)]
     port: Option<u16>,
 
@@ -41,9 +40,10 @@ struct Args {
     #[arg(long)]
     spa: bool,
 
-    /// Serve a finished site: no live reload, no file lists, and browsers check
-    /// a kept file for changes before using it
-    #[arg(long, conflicts_with_all = ["poll", "ignore"])]
+    /// Serve a finished site: no live reload, no file lists, no moving to another
+    /// port, and browsers check kept files for changes, apart from those
+    /// --cache-assets keeps
+    #[arg(long, conflicts_with = "watching")]
     production: bool,
 
     /// Do not show file lists, not even with ?list
@@ -51,12 +51,12 @@ struct Args {
     no_list: bool,
 
     /// Do not watch for changes, and do not refresh the browser
-    #[arg(long)]
+    #[arg(long, conflicts_with = "watching")]
     no_reload: bool,
 
     /// Find changes by looking at the files, for a network or shared folder
     /// the system reports no changes in
-    #[arg(long, conflicts_with = "no_reload")]
+    #[arg(long, group = "watching")]
     poll: bool,
 
     /// Let browsers keep files under /assets/ for a year; only safe when a file
@@ -71,11 +71,25 @@ struct Args {
     /// Do not refresh the browser for a change matching this pattern, such as
     /// "*.log" or "cache"; may be given more than once, or kept one to a line
     /// in a .servioignore file in the served directory
-    #[arg(long, value_name = "PATTERN", conflicts_with = "no_reload")]
+    #[arg(long, value_name = "PATTERN", group = "watching")]
     ignore: Vec<String>,
 }
 
 impl Args {
+    fn watches(&self) -> bool {
+        !self.no_reload && !self.production
+    }
+
+    fn lists(&self) -> bool {
+        !self.no_list && !self.production
+    }
+
+    /// The port to take, or none to step up from 3030 to a free one. A finished
+    /// site stays put, since whatever sends requests to it expects its port.
+    fn exact_port(&self) -> Option<u16> {
+        self.port.or(self.production.then_some(DEFAULT_PORT))
+    }
+
     /// `--cache-assets` keeps files under /assets/ for a year, with or without
     /// `--production`.
     fn caching(&self) -> Caching {
@@ -101,13 +115,7 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<()> {
-    let mut args = Args::parse();
-    // `--production` stands for these two, so the checks below need only them.
-    if args.production {
-        args.no_reload = true;
-        args.no_list = true;
-    }
-
+    let args = Args::parse();
     let static_dir = resolve_dir(&args.dir)?;
 
     // A missing path already failed in resolve_dir; this catches a file.
@@ -125,7 +133,7 @@ async fn run() -> Result<()> {
     // to serve.
     let mut from_ignore_file = 0;
     let mut ignored = None;
-    if !args.no_reload {
+    if args.watches() {
         let file = ignore::read_file(&static_dir)?;
         from_ignore_file = file.len();
         ignored = Some(ignore::Ignored::from(&args.ignore, &file)?);
@@ -138,13 +146,13 @@ async fn run() -> Result<()> {
     let app = serve::app(
         &static_dir,
         args.spa,
-        !args.no_list,
+        args.lists(),
         args.caching(),
-        (!args.no_reload).then_some(livereload),
+        args.watches().then_some(livereload),
         no_app_page,
     );
 
-    let listener = listen::listen(args.host, args.port).await?;
+    let listener = listen::listen(args.host, args.exact_port()).await?;
 
     // With `--port 0` the system picks the port, so ask the listener.
     let bound = listener

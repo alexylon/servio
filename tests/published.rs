@@ -35,53 +35,6 @@ fn check(server: &Server, address: &str, kept: &Response) -> Response {
 }
 
 #[test]
-fn hashed_assets_are_kept_and_everything_else_is_checked() {
-    // A build puts the hash of the contents in the name, so the file at that
-    // address never changes. The page itself does.
-    let dir = site("cache");
-    let server = Server::start(dir.path(), &["--cache-assets"]);
-
-    assert_eq!(
-        get(server.port, "/assets/app-abc123.css").header("cache-control"),
-        Some("public, max-age=31536000, immutable")
-    );
-    assert_eq!(
-        get(server.port, "/").header("cache-control"),
-        Some("no-cache")
-    );
-    assert_eq!(
-        get(server.port, "/nowhere.png").header("cache-control"),
-        Some("no-cache")
-    );
-}
-
-#[test]
-fn a_file_that_is_not_there_is_never_kept() {
-    // A deploy can be caught halfway, with the page asking for a file that has
-    // not been copied yet. Keeping that answer for a year would mean the file
-    // is never asked for again on that browser, and the name carries a hash so
-    // it never changes.
-    let dir = site("missing");
-    let server = Server::start(dir.path(), &["--cache-assets"]);
-
-    let response = get(server.port, "/assets/not-copied-yet-abc123.js");
-    assert_eq!(response.status, 404);
-    assert_eq!(response.header("cache-control"), Some("no-cache"));
-}
-
-#[test]
-fn a_page_at_a_folders_own_address_under_assets_is_not_kept() {
-    // Only file names carry a hash; the page at a folder's address can change.
-    let dir = site("folder-page");
-    dir.write("assets/docs/index.html", "<html>docs</html>");
-    let server = Server::start(dir.path(), &["--cache-assets"]);
-
-    let response = get(server.port, "/assets/docs/");
-    assert_eq!(response.status, 200);
-    assert_eq!(response.header("cache-control"), Some("no-cache"));
-}
-
-#[test]
 fn a_missing_asset_is_never_answered_with_the_app() {
     // Nothing under /assets/ is a route: those names carry a hash of the
     // file's contents. Answering with the app page there would leave the
@@ -145,55 +98,53 @@ fn a_browser_that_already_has_the_file_is_told_so() {
 }
 
 #[test]
-fn without_the_flag_nothing_is_kept() {
-    let dir = site("off");
-    let server = Server::start(dir.path(), &[]);
-
-    assert_eq!(
-        get(server.port, "/assets/app-abc123.css").header("cache-control"),
-        Some("no-store")
-    );
-}
-
-#[test]
 fn each_mode_tells_the_browser_what_it_may_keep() {
     const NOTHING: &str = "no-store";
     const CHECKED: &str = "no-cache";
     const YEAR: &str = "public, max-age=31536000, immutable";
 
     let dir = site("modes");
-    // Kept all the same, though its name has no hash: servio does not check.
     dir.write("assets/logo.png", "png");
     dir.write("assets/docs/index.html", "<html>docs</html>");
 
     let addresses = [
-        "/",
-        "/assets/app-abc123.css",
-        "/assets/logo.png",
-        "/assets/not-copied-yet-abc123.js",
-        "/assets/docs/",
+        ("/", 200),
+        // A build puts a hash of the contents in the name.
+        ("/assets/app-abc123.css", 200),
+        // Kept all the same, though its name has no hash: servio does not check.
+        ("/assets/logo.png", 200),
+        // Missing during a deploy. Kept for a year, it would never be asked for
+        // again once the deploy finished.
+        ("/assets/not-copied-yet-abc123.js", 404),
+        // A folder's page can change, whatever the folder is called.
+        ("/assets/docs/", 200),
     ];
     let assets = "files under /assets/ for a year, the rest checked each time";
-    let modes: [(&[&str], &str, [&str; 5]); 4] = [
-        (&[], "off", [NOTHING; 5]),
+    // The flags, the banner, what each address may be kept for, and whether a
+    // file sent carries a tag to check it by.
+    let modes: [(&[&str], &str, [&str; 5], bool); 4] = [
+        (&[], "off", [NOTHING; 5], false),
         (
             &["--production"],
             "on, checked for changes each time",
             [CHECKED; 5],
+            true,
         ),
         (
             &["--cache-assets"],
             assets,
             [CHECKED, YEAR, YEAR, CHECKED, CHECKED],
+            true,
         ),
         (
             &["--production", "--cache-assets"],
             assets,
             [CHECKED, YEAR, YEAR, CHECKED, CHECKED],
+            true,
         ),
     ];
 
-    for (flags, banner, kept) in modes {
+    for (flags, banner, kept, tagged) in modes {
         let server = Server::start(dir.path(), flags);
         assert!(
             server.said(&format!("Caching        : {banner}")),
@@ -201,11 +152,15 @@ fn each_mode_tells_the_browser_what_it_may_keep() {
             server.lines().join("\n")
         );
 
-        for (address, kept) in addresses.into_iter().zip(kept) {
+        for ((address, status), kept) in addresses.into_iter().zip(kept) {
+            let response = get(server.port, address);
+            let context = format!("{address} with {flags:?}");
+            assert_eq!(response.status, status, "{context}");
+            assert_eq!(response.header("cache-control"), Some(kept), "{context}");
             assert_eq!(
-                get(server.port, address).header("cache-control"),
-                Some(kept),
-                "{address} with {flags:?}"
+                response.header("etag").is_some(),
+                tagged && status == 200,
+                "{context}"
             );
         }
     }

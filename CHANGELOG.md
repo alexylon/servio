@@ -10,8 +10,9 @@
   of them is ever served
 - `--no-list` turns the lists off, for a site other devices can reach. The
   banner warns when other devices can reach the server and the lists are on
-- `--production` serves a finished site: no live reload and no file lists, and
-  browsers may keep files as long as they check for changes before using them.
+- `--production` serves a finished site: no live reload, no file lists, and no
+  moving to another port when 3030, or the port given, is busy. Browsers may
+  keep files as long as they check for changes before using them.
   With `--cache-assets` as well, files under `/assets/` are still kept for a
   year
 - Each GitHub release comes with `SHA256SUMS`, to check the downloaded

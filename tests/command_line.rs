@@ -288,6 +288,21 @@ fn production_with_polling_or_ignoring_is_refused_whichever_comes_first() {
 }
 
 #[test]
+fn production_never_moves_to_another_port() {
+    // Whatever sends requests to a finished site expects its port, so a busy
+    // one is an error there rather than a quiet move.
+    let dir = TempDir::new("production-port");
+    dir.write("index.html", "<html>hi</html>");
+    // Held here while it is free; otherwise something else already holds it.
+    let _held = std::net::TcpListener::bind(("127.0.0.1", 3030));
+
+    let (said, ok) = run(&["--dir", dir.path().to_str().unwrap(), "--production"]);
+
+    assert!(!ok, "{said}");
+    assert!(said.contains("port 3030 is already in use"), "{said}");
+}
+
+#[test]
 fn production_may_be_given_with_the_flags_it_stands_for() {
     let dir = TempDir::new("production-and-its-flags");
     dir.write("index.html", "<html>hi</html>");

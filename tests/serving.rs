@@ -39,22 +39,6 @@ fn a_missing_file_is_not_found() {
 }
 
 #[test]
-fn nothing_is_cached() {
-    let dir = site("cache");
-    let server = Server::start(dir.path(), &[]);
-
-    for path in ["/", "/assets/app.css", "/nowhere.png"] {
-        let response = get(server.port, path);
-        assert_eq!(
-            response.header("cache-control"),
-            Some("no-store"),
-            "for {path}"
-        );
-        assert_eq!(response.header("etag"), None, "for {path}");
-    }
-}
-
-#[test]
 fn a_browser_is_never_told_that_nothing_changed() {
     let dir = site("conditional");
     let server = Server::start(dir.path(), &[]);

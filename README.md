@@ -115,9 +115,9 @@ servio --dir site_public --port 3030 --production
 
 `--production` turns off live reload and file lists, and lets browsers keep
 files as long as they check for changes first. Give the port a proxy or service
-expects: without `--port`, servio picks the next free port when 3030 is busy,
-and the proxy keeps sending requests to 3030. The default host, `127.0.0.1`,
-suits a proxy on the same machine.
+expects. In production servio never moves to another port: if the port is busy,
+it exits with an error rather than serving where the proxy is not looking. The
+default host, `127.0.0.1`, suits a proxy on the same machine.
 
 ### Single-page apps
 
@@ -141,7 +141,7 @@ whenever they change; see [Caching](#caching).
 | `-p, --port <PORT>` | `3030` | Port to use |
 | `--host <HOST>` | `127.0.0.1` | Address to listen on |
 | `--spa` | off | Serve `index.html` when a page route matches no file |
-| `--production` | off | Serve a finished site: no live reload, no file lists, and browsers check kept files for changes |
+| `--production` | off | Serve a finished site: no live reload, no file lists, no moving to another port, and browsers check kept files for changes |
 | `--no-list` | off | Do not show a folder's files, neither where it has no `index.html` nor with `?list` |
 | `--no-reload` | off | Disable file watching and browser refreshes |
 | `--poll` | off | Find changes by looking at the files, once a second |
@@ -151,7 +151,8 @@ whenever they change; see [Caching](#caching).
 
 If you do not specify a port and 3030 is busy, servio tries the next available
 port through 3039 and prints the selected address. If you specify a port,
-servio uses that exact port or exits with an error.
+servio uses that exact port or exits with an error, and so does `--production`
+with 3030 when no port is given.
 
 `--open` opens the address in your usual browser, or in the one `BROWSER`
 names. That variable may be a whole command, with `%s` where the address goes:

@@ -60,7 +60,7 @@ pub(crate) fn print(
 
     println!("{RULE}");
     row(style, "Serving", static_dir.display());
-    if args.port.is_none() && bound.port() != DEFAULT_PORT {
+    if args.exact_port().is_none() && bound.port() != DEFAULT_PORT {
         row(
             style,
             "Note",
@@ -75,10 +75,10 @@ pub(crate) fn print(
     row(
         style,
         "File lists",
-        if args.no_list {
-            "off"
-        } else {
+        if args.lists() {
             "where a folder has no index.html, or with ?list"
+        } else {
+            "off"
         },
     );
     row(
@@ -99,7 +99,7 @@ pub(crate) fn print(
             format!("there is no {INDEX_FILE} here, so the app will not load"),
         );
     }
-    if !args.no_list && reachable_from_elsewhere(args.host) {
+    if args.lists() && reachable_from_elsewhere(args.host) {
         row(
             style,
             "Warning",
@@ -149,7 +149,7 @@ fn row(style: Style, label: &str, value: impl Display) {
 /// Worth saying when the server is looking at the files rather than being told
 /// about them: that notices later, and reads the whole directory each time.
 fn live_reload(args: &Args) -> String {
-    if args.no_reload {
+    if !args.watches() {
         return "off".to_string();
     }
 

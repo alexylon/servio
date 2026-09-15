@@ -5,6 +5,7 @@ mod guard;
 mod ignore;
 mod list;
 mod listen;
+mod refresh;
 mod serve;
 mod version;
 mod watch;

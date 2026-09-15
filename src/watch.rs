@@ -1,6 +1,7 @@
 //! Watching the served directory, and telling the browser when it changed.
 
 use crate::ignore::Ignored;
+use crate::refresh::{refresh_once_quiet, wait_for_change};
 use anyhow::Result;
 use file_id::FileId;
 use notify_debouncer_full::notify::ErrorKind as WatchError;
@@ -21,17 +22,6 @@ use tower_livereload::Reloader;
 /// Long enough to group the writes one save makes, short enough that the
 /// refresh still feels immediate.
 const DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
-
-/// How long the files have to stay quiet before the browser is refreshed. The
-/// watcher hands over what it has every few hundredths of a second, and a
-/// build writes for longer than that; refreshed at each handover, the browser
-/// would reload a dozen times for one build.
-const QUIET_FOR: Duration = Duration::from_millis(150);
-
-/// How long files that never go quiet can put a refresh off: a log written
-/// every moment, a build that runs for minutes. Past this the browser is
-/// refreshed anyway, and again as the writing goes on.
-const PUT_OFF_AT_MOST: Duration = Duration::from_secs(1);
 
 /// How often `--poll` looks at the files. A change waits up to this long to be
 /// noticed, and every look reads every file, on the very folders where reading
@@ -72,7 +62,17 @@ enum Rewatch {
 pub(crate) fn start(root: &Path, poll: bool, ignored: Ignored, reloader: Reloader) -> Result<()> {
     let (failed, failures) = mpsc::channel();
     let (changed, changes) = mpsc::channel();
-    std::thread::spawn(move || refresh_once_quiet(changes, reloader));
+    std::thread::spawn(move || {
+        refresh_once_quiet(
+            |until| wait_for_change(&changes, until),
+            |worth_a_line| {
+                if worth_a_line {
+                    println!("  File changed, reloading...");
+                }
+                reloader.reload();
+            },
+        );
+    });
 
     let rebuilds = Rebuilds::new(poll);
     let report = report_changes(
@@ -122,26 +122,6 @@ pub(crate) fn start(root: &Path, poll: bool, ignored: Ignored, reloader: Reloade
         .map_err(|error| cannot_watch_here(root, &error))?;
 
         keep_watching(debouncer, root, failures, rebuilds, changed)
-    }
-}
-
-/// Refreshes the browser once the files have been quiet for a moment, however
-/// often the watcher spoke up meanwhile, and says so where any of that was
-/// worth a line.
-fn refresh_once_quiet(changes: mpsc::Receiver<bool>, reloader: Reloader) {
-    while let Ok(mut worth_a_line) = changes.recv() {
-        let waiting_since = Instant::now();
-        while let Ok(another) = changes.recv_timeout(QUIET_FOR) {
-            worth_a_line |= another;
-            if waiting_since.elapsed() >= PUT_OFF_AT_MOST {
-                break;
-            }
-        }
-
-        if worth_a_line {
-            println!("  File changed, reloading...");
-        }
-        reloader.reload();
     }
 }
 

@@ -49,7 +49,8 @@ The tag starts `.github/workflows/release.yml`, which:
 1. Runs every check a push gets on the tagged commit, and checks that the tag
    names the version in `Cargo.toml`
 2. Builds the programs for Linux (x86-64 and arm64), macOS (Intel and Apple
-   silicon) and Windows
+   silicon) and Windows, and runs each one its build machine can run, to check
+   that it names the tag's version
 3. Publishes the crate to crates.io
 4. Creates a GitHub release with the archives and their checksums in
    `SHA256SUMS`

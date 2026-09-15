@@ -31,14 +31,15 @@ each system below, holding just the program. Running it needs no Rust.
 
 | System | Archive |
 | --- | --- |
-| Linux, x86-64 | `servio-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux, arm64 | `servio-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux, x86-64 | `servio-x86_64-unknown-linux-musl.tar.gz` |
+| Linux, arm64 | `servio-aarch64-unknown-linux-musl.tar.gz` |
 | macOS, Apple silicon | `servio-aarch64-apple-darwin.tar.gz` |
 | macOS, Intel | `servio-x86_64-apple-darwin.tar.gz` |
 | Windows, x86-64 | `servio-x86_64-pc-windows-msvc.zip` |
 
-The Linux programs need glibc 2.39 or newer, as on Ubuntu 24.04, Debian 13 and
-Fedora 40 or later.
+The Linux programs are static builds, so they run on any Linux, whatever C
+library it has. Releases up to 0.6.2 had `-gnu` archives instead, which need
+glibc 2.39 or newer.
 
 On Linux or macOS, download your archive and the `SHA256SUMS` file, which
 releases after 0.6.2 include. Check the archive against it, then put `servio`

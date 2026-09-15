@@ -37,6 +37,10 @@
 - A folder with no `index.html` answers with the list of its files rather than
   404, unless `--no-list` is given. With `--spa`, a browser opening one still
   gets the app
+- The Linux archives are static builds that run on any Linux:
+  `servio-x86_64-unknown-linux-musl.tar.gz` and
+  `servio-aarch64-unknown-linux-musl.tar.gz`. The `-gnu` archives, which needed
+  glibc 2.39 or newer, are no longer made
 
 ### Security
 - An address starting with `//` that named a served folder, such as

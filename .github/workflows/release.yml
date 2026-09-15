@@ -42,19 +42,23 @@ jobs:
     strategy:
       matrix:
         include:
-          # A fixed version: the binary needs this system's glibc, which the
-          # README names.
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
+          # Static, so they run on any Linux, whatever C library it has.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            runs: true
           # The Raspberry Pi this is developed on, among others.
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
+            runs: true
+          # Built on Apple silicon, which cannot run it.
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+            runs: true
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            runs: true
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -70,6 +74,14 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Check that the program runs and names the tag's version
+        if: matrix.runs
+        shell: bash
+        run: |
+          said=$(target/${{ matrix.target }}/release/servio --version)
+          echo "$said"
+          [ "$said" = "servio ${GITHUB_REF_NAME#v}" ]
 
       - name: Package (unix)
         if: runner.os != 'Windows'

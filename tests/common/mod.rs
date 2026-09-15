@@ -65,15 +65,10 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        if std::fs::remove_dir_all(&self.path).is_ok() {
-            return;
-        }
-
         // A test that closed a directory to see what the server says leaves
         // one nothing can remove. Opened again, so the run leaves nothing
         // behind in the system's temporary directory.
-        #[cfg(unix)]
-        {
+        if std::fs::remove_dir_all(&self.path).is_err() {
             open_again(&self.path);
             let _ = std::fs::remove_dir_all(&self.path);
         }
@@ -99,6 +94,10 @@ fn open_again(path: &Path) {
         }
     }
 }
+
+/// Only tests on Unix close directories, so elsewhere there is nothing to open.
+#[cfg(not(unix))]
+fn open_again(_path: &Path) {}
 
 pub struct Server {
     child: Child,

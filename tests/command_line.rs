@@ -468,6 +468,7 @@ fn opens_an_address_a_browser_can_open() {
 
 /// What the stand-in browser was given. The shell creates the file before
 /// writing the line, so an empty file means the browser has not run yet.
+#[cfg(unix)]
 fn wait_for_a_line(written: &std::path::Path, server: &Server) -> String {
     let deadline = Instant::now() + STARTS_WITHIN;
     loop {

@@ -1,8 +1,9 @@
 //! Whether a browser's copy of a file is still current, told by which file it
 //! is, its size and the time it was written, to the nanosecond where the disk
-//! keeps it. The file service compares whole seconds only, so it would answer a
-//! file rolled back to an older copy, or saved twice within a second, as
-//! unchanged.
+//! keeps it. The file service's own answers fall short: its tags leave out which
+//! file it is, so a new file of the same size and time passes for the old one,
+//! and it reads a date in whole seconds, so a file rolled back to an older copy,
+//! or saved twice within a second, passes as unchanged.
 
 use crate::serve::INDEX_FILE;
 use axum::extract::Request;
@@ -88,7 +89,7 @@ fn without_weak_mark(tag: &str) -> &str {
 
 /// Answers "is my copy still current?" for a file on disk, and tags the file
 /// when it is sent. The questions come off the request either way, so the file
-/// service never answers them by date.
+/// service never answers them itself.
 pub(crate) async fn answer_by_version(root: PathBuf, mut request: Request, next: Next) -> Response {
     let version = match *request.method() {
         Method::GET | Method::HEAD => file_version(&root, request.uri().path()),
@@ -154,6 +155,9 @@ fn file_version(root: &Path, path: &str) -> Option<Version> {
             return None;
         }
         file.push(INDEX_FILE);
+    } else if path.ends_with('/') {
+        // With one, a file's address is not found.
+        return None;
     }
 
     let metadata = std::fs::metadata(&file).ok()?;

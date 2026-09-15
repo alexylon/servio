@@ -22,10 +22,14 @@ path = "src/main.rs"
 anyhow = "1"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["fs", "compression-gzip", "compression-br", "set-header"] }
+tower-http = { version = "0.7", features = ["fs", "compression-gzip", "compression-br", "set-header"] }
 clap = { version = "4", features = ["derive"] }
 tower-livereload = "0.10"
-notify-debouncer-full = "0.5"
+# Not 0.7 or 0.8.0-rc.2: they hold back repeated changes to one file until the
+# changes stop. On Windows, which reports every write alike, a file written
+# without pause refreshes the browser only once it pauses. Tests on macOS and
+# Linux cannot show this, so check on Windows before upgrading.
+notify-debouncer-full = "0.6"
 http = "1"
 # Tells one directory from another; notify already builds it.
 file-id = "0.2"

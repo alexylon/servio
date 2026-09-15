@@ -47,8 +47,10 @@ const CHECK_BEFORE_USE: &str = "no-cache";
 
 /// The file service and the layers around it. Each layer added wraps the ones
 /// before it, and the order matters:
-/// - version checks sit right next to the file service, inside every refusal,
-///   so nothing refused is ever answered as unchanged;
+/// - the file service's own tags come off right next to it, so the only tags
+///   that reach a browser are the ones version checks add;
+/// - version checks sit just outside that, inside every refusal, so nothing
+///   refused is ever answered as unchanged;
 /// - the index.html check sits just outside them, so `?list` never reaches it;
 /// - the refusals sit inside the headers, so a refusal gets the same headers;
 /// - the app shell and file lists sit inside live reload, so their pages get
@@ -65,7 +67,9 @@ pub(crate) fn app(
     livereload: Option<LiveReloadLayer>,
     no_app_page: bool,
 ) -> Router {
-    let mut app = Router::new().fallback_service(ServeDir::new(static_dir));
+    let mut app = Router::new()
+        .fallback_service(ServeDir::new(static_dir))
+        .layer(middleware::from_fn(drop_file_service_tags));
 
     // With nothing kept, there is no copy to ask about.
     let checks_versions = !matches!(caching, Caching::Off);
@@ -290,6 +294,16 @@ async fn keep_assets(request: Request, next: Next) -> Response {
         }),
     );
 
+    response
+}
+
+/// The file service tags each file it sends, by size and write time, and its
+/// tags promise the exact bytes of the file. A browser often gets other bytes:
+/// compressed, or a page with the reload script added. The only tags sent are
+/// the ones version.rs makes, and only where a browser may keep the file.
+async fn drop_file_service_tags(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().remove(header::ETAG);
     response
 }
 

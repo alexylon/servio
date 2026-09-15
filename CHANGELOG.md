@@ -42,6 +42,8 @@
   `servio-x86_64-unknown-linux-musl.tar.gz` and
   `servio-aarch64-unknown-linux-musl.tar.gz`. The `-gnu` archives, which needed
   glibc 2.39 or newer from 0.6.0 on, are no longer made
+- A file's address with a slash after it, such as `/style.css/`, answers 404
+  rather than the file. With `--spa`, a browser opening one gets the app
 
 ### Security
 - An address starting with `//` that named a served folder, such as

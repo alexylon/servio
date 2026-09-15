@@ -305,6 +305,25 @@ fn a_copy_named_by_its_tag_is_not_sent_again() {
 }
 
 #[test]
+fn a_file_asked_for_with_a_slash_after_it_is_not_found_even_by_its_tag() {
+    // The file service finds nothing at that address, so there is no copy to
+    // be current.
+    let dir = site("slash-after-file");
+    let server = Server::start(dir.path(), &["--production"]);
+
+    let kept = get(server.port, "/assets/app-abc123.css");
+    let tag = kept.header("etag").expect("no tag to check with");
+    let checked = request(
+        server.port,
+        "GET",
+        "/assets/app-abc123.css/",
+        &[("If-None-Match", tag)],
+    );
+
+    assert_eq!(checked.status, 404);
+}
+
+#[test]
 fn a_tag_is_one_number_that_stays_when_the_server_starts_again() {
     // Parts of a tag such as an inode number are read as a leak, as they were
     // for Apache. A tag that changed with every start would send every file

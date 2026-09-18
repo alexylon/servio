@@ -129,11 +129,12 @@ pub(crate) fn start(root: &Path, poll: bool, ignored: Ignored, reloader: Reloade
 /// watcher and the check.
 #[derive(Clone)]
 struct Rebuilds {
-    /// When a rebuild was last announced. The watcher's own account of the
-    /// same rebuild arrives a moment later, and this is how it is recognised
-    /// as the echo it is. Where the watcher gets there first instead, what it
-    /// says is dropped by comparing `watching` with the directory at the name.
-    announced: Arc<Mutex<Option<Instant>>>,
+    /// When a rebuild was last announced, and so refreshed for. The watcher's
+    /// own account of the same rebuild arrives later, and this is how it is
+    /// recognised as the echo it is. Where the watcher gets there first
+    /// instead, what it says is dropped by comparing `watching` with the
+    /// directory at the name.
+    announced: Arc<Mutex<Option<Moment>>>,
     /// Which directory the watch is on, by the system's number for it. The
     /// watch follows the directory and not the name, so the watcher compares
     /// this with what the name leads to now before reporting anything.
@@ -153,9 +154,26 @@ impl Rebuilds {
     }
 }
 
-/// How long after the watch goes on the files themselves are asked whether
-/// anything happened. Long enough for a system that takes its time to have
-/// caught up.
+/// A moment by both clocks: one to compare the times files changed against,
+/// one to measure how long ago it was.
+#[derive(Clone, Copy)]
+struct Moment {
+    at: Instant,
+    clock: SystemTime,
+}
+
+impl Moment {
+    fn now() -> Moment {
+        Moment {
+            at: Instant::now(),
+            clock: SystemTime::now(),
+        }
+    }
+}
+
+/// How long after the browser was last up to date the files themselves are
+/// asked whether anything happened. Long enough for a system that takes its
+/// time to have caught up.
 const SETTLING_IN: Duration = Duration::from_secs(3);
 
 /// What the watcher calls when files changed, and when it could not read them.
@@ -171,10 +189,7 @@ fn report_changes(
     // not say it again.
     let mut told: Vec<String> = Vec::new();
 
-    // When the watch goes on, by both clocks: one to compare write times
-    // against, one to measure the first moments by.
-    let watch_went_on = SystemTime::now();
-    let watching_since = Instant::now();
+    let watch_went_on = Moment::now();
 
     move |result| match result {
         Ok(events) => {
@@ -186,11 +201,13 @@ fn report_changes(
                 return;
             }
 
-            let settling = settling_in(polling, watching_since, Instant::now());
+            let announced = rebuilds.announced.lock().ok().and_then(|at| *at);
+            let up_to_date = up_to_date_at(watch_went_on, announced);
+            let settling = settling_in(polling, up_to_date.at, Instant::now());
 
             if events.iter().any(|event| {
                 is_change(&ignored, &root, event, polling)
-                    && !(settling && from_before_the_watch(event, watch_went_on))
+                    && !(settling && unchanged_since(&root, event, up_to_date.clock))
             }) {
                 // Whether this is worth a line is decided now, while a
                 // rebuild just announced is still fresh. The refresh itself
@@ -370,7 +387,7 @@ fn watch_again<W: notify::Watcher>(
     debouncer: &mut Debounced<W>,
     root: &Path,
     failures: &Receiver<()>,
-    rebuild: Option<&Mutex<Option<Instant>>>,
+    rebuild: Option<&Mutex<Option<Moment>>>,
 ) -> Option<Watched> {
     // What has been said about a watch the system refused, so it is said once.
     let mut told = None;
@@ -440,34 +457,82 @@ fn same_directory(before: Option<&Watched>, after: Option<FileId>) -> bool {
     before.is_some_and(|it| Some(it.id) == after)
 }
 
-/// True in the first moments after the watch went on, when the system's own
-/// notifications may still hand over files written before then. A poll has its
-/// own account of what the files were, so it never reports one that was there
-/// all along.
-fn settling_in(polling: bool, watching_since: Instant, now: Instant) -> bool {
-    !polling && now.saturating_duration_since(watching_since) < SETTLING_IN
+/// When the browser was last up to date with the files: when the watch went
+/// on, or when a rebuild was last announced and refreshed for. A file
+/// unchanged since is no news to it.
+///
+/// A rebuild counts only where the system keeps the time a file last changed
+/// in any way, as [`last_changed`] reads it. The check can announce a rebuild
+/// while the build is still copying, and elsewhere a copy that keeps the write
+/// times of what it copies would pass for a file written before, and never be
+/// refreshed for.
+fn up_to_date_at(watch_went_on: Moment, announced: Option<Moment>) -> Moment {
+    match announced {
+        Some(announced) if cfg!(unix) => announced,
+        _ => watch_went_on,
+    }
 }
 
-/// True when everything the event names is still there with a write time from
-/// before the watch went on, so nothing has happened to it since.
+/// True in the first moments after the browser was up to date, when the
+/// system's own notifications may still hand over files changed before then. A
+/// poll has its own account of what the files were, so it never reports one
+/// that was there all along.
+fn settling_in(polling: bool, up_to_date: Instant, now: Instant) -> bool {
+    !polling && now.saturating_duration_since(up_to_date) < SETTLING_IN
+}
+
+/// True when nothing the event names has changed since `since`: each file is
+/// still there unchanged, or gone from a folder that has not changed since
+/// either.
 ///
-/// macOS hands over a file written just before the watch went on as though it
-/// had been written after, and can be a second or more late about it. That
-/// reads as a change nobody made, one line and one refresh into every run.
-///
-/// Worth asking only in the first moments. Later a write time is no judge: a
-/// copy that keeps the times of the files it copies writes new contents with
-/// old times.
-fn from_before_the_watch(event: &DebouncedEvent, watch_went_on: SystemTime) -> bool {
+/// macOS hands over files written just before a watch went on as though they
+/// had been written after, and can be a second or more late about it: the
+/// files there at startup, and the ones a rebuild wrote before the check
+/// announced it. Each reads as a change nobody made, one line and one refresh
+/// more. Worth asking only in the first moments, while that can happen.
+fn unchanged_since(root: &Path, event: &DebouncedEvent, since: SystemTime) -> bool {
     // Dropped events name nothing to ask, or on macOS the directory they were
     // under, which says nothing about what was dropped.
     !event.need_rescan()
         && !event.paths.is_empty()
-        && event.paths.iter().all(|path| {
-            std::fs::metadata(path)
-                .and_then(|about| about.modified())
-                .is_ok_and(|written| written <= watch_went_on)
-        })
+        && event
+            .paths
+            .iter()
+            .all(|path| last_changed(root, path).is_some_and(|changed| changed <= since))
+}
+
+/// When the file at `path` last changed in any way, or where it is gone, the
+/// nearest folder above it that is still there: taking a file away changes the
+/// folder it was in. A link is asked about itself, as it can be made or pointed
+/// elsewhere after what it leads to was written.
+///
+/// Unlike the time a file was written, nothing can set this back: a copy that
+/// keeps the write times of what it copies still moves it. Except on FAT and
+/// exFAT drives, which give the write time for it; there a copy like that,
+/// made after a rebuild was announced, can go without a refresh.
+#[cfg(unix)]
+fn last_changed(root: &Path, path: &Path) -> Option<SystemTime> {
+    use std::os::unix::fs::MetadataExt;
+
+    let there = std::fs::symlink_metadata(path).ok().or_else(|| {
+        path.ancestors()
+            .skip(1)
+            .take_while(|it| it.starts_with(root))
+            .find_map(|it| std::fs::metadata(it).ok())
+    })?;
+    let seconds = u64::try_from(there.ctime()).ok()?;
+    let nanoseconds = u32::try_from(there.ctime_nsec()).ok()?;
+
+    SystemTime::UNIX_EPOCH.checked_add(Duration::new(seconds, nanoseconds))
+}
+
+/// Elsewhere, when the file at `path` was last written, and a file that is gone
+/// counts as changed: not every disk keeps a folder's own time up to date.
+#[cfg(not(unix))]
+fn last_changed(_root: &Path, path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|about| about.modified())
+        .ok()
 }
 
 /// True when the browser should refresh.
@@ -546,7 +611,9 @@ fn directory_id(path: &Path) -> Option<FileId> {
 
 /// How long the watcher's own account of a rebuild goes on arriving after the
 /// rebuild was announced: as long as the watcher takes to hear about it, plus
-/// the one [`CHECK_INTERVAL`] by which the check got there first.
+/// the one [`CHECK_INTERVAL`] by which the check got there first. A busy Mac
+/// can take longer still, but what it hands over that late names files
+/// unchanged since the announcement, which are no change at all.
 ///
 /// Anything arriving inside the window goes unreported, a real change saved just
 /// after a rebuild included; the page still refreshes, only the line is lost. A
@@ -567,9 +634,9 @@ fn same_rebuild(poll: bool) -> Duration {
 
 /// Marks a rebuild as announced as of now, so the watcher's own account of it
 /// is recognised as the echo it is.
-fn announce(at: &Mutex<Option<Instant>>) {
+fn announce(at: &Mutex<Option<Moment>>) {
     if let Ok(mut at) = at.lock() {
-        *at = Some(Instant::now());
+        *at = Some(Moment::now());
     }
 }
 
@@ -606,12 +673,12 @@ fn replaced_under_the_watch(watching: &Mutex<Option<FileId>>, root: &Path) -> bo
 /// True when a rebuild was announced less than `within` before `now`, so what
 /// the watcher is reporting then is that same rebuild reaching it the slower
 /// way.
-fn just_announced(at: &Mutex<Option<Instant>>, now: Instant, within: Duration) -> bool {
+fn just_announced(at: &Mutex<Option<Moment>>, now: Instant, within: Duration) -> bool {
     let Ok(at) = at.lock() else {
         return false;
     };
 
-    at.is_some_and(|when| now.saturating_duration_since(when) < within)
+    at.is_some_and(|when| now.saturating_duration_since(when.at) < within)
 }
 
 /// The whole line to print about what one look could not read, or nothing where
@@ -820,7 +887,7 @@ mod tests {
             false
         ));
         assert!(
-            !from_before_the_watch(&dropped, SystemTime::now()),
+            !unchanged_since(Path::new(ROOT), &dropped, SystemTime::now()),
             "a report naming no file was taken for one about old files"
         );
     }
@@ -874,8 +941,9 @@ mod tests {
     #[test]
     fn what_arrives_inside_the_window_after_a_rebuild_is_its_echo() {
         let window = same_rebuild(false);
-        let announced_at = Instant::now();
-        let announced = Mutex::new(Some(announced_at));
+        let announcement = Moment::now();
+        let announced_at = announcement.at;
+        let announced = Mutex::new(Some(announcement));
         let a_moment = Duration::from_millis(1);
 
         assert!(just_announced(&announced, announced_at, window));
@@ -1096,29 +1164,181 @@ mod tests {
     }
 
     #[test]
-    fn a_file_written_before_the_watch_went_on_is_not_a_change() {
+    fn a_file_unchanged_since_the_browser_was_up_to_date_is_not_a_change() {
         let dir = std::env::temp_dir().join(format!("servio-settling-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let page = dir.join("index.html");
         std::fs::write(&page, "<html>before</html>").unwrap();
 
-        // The watch is taken to go on when the file was written, and a moment
-        // before, so nothing has to wait.
-        let written_at = std::fs::metadata(&page).unwrap().modified().unwrap();
+        // Up to date as the file changed, and a moment before, so nothing has
+        // to wait.
+        let changed = last_changed(&dir, &page).unwrap();
         let about_the_page = written(&[page.to_str().unwrap()]);
         assert!(
-            from_before_the_watch(&about_the_page, written_at),
+            unchanged_since(&dir, &about_the_page, changed),
             "a file nobody touched was taken for one that changed"
         );
         assert!(
-            !from_before_the_watch(&about_the_page, written_at - Duration::from_millis(1)),
-            "a file written since the watch went on is a change"
+            !unchanged_since(&dir, &about_the_page, changed - Duration::from_millis(1)),
+            "a file written since is a change"
         );
 
-        // Gone, so nothing says it was there all along.
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_is_gone_is_judged_by_the_folder_it_was_in() {
+        // A rebuild clearing out old files, handed over late, or a file taken
+        // away since.
+        let dir = std::env::temp_dir().join(format!("servio-cleared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("old.css");
+        std::fs::write(&page, "body {}").unwrap();
         std::fs::remove_file(&page).unwrap();
-        assert!(!from_before_the_watch(&about_the_page, written_at));
+
+        let cleared = last_changed(&dir, &dir).unwrap();
+        let removed = event(
+            EventKind::Remove(RemoveKind::File),
+            &[page.to_str().unwrap()],
+        );
+        assert!(
+            unchanged_since(&dir, &removed, cleared),
+            "a file gone before the browser was up to date was taken for a change"
+        );
+        assert!(
+            !unchanged_since(&dir, &removed, cleared - Duration::from_millis(1)),
+            "a file taken away since is a change"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn elsewhere_a_file_that_is_gone_counts_as_changed() {
+        let dir = std::env::temp_dir().join(format!("servio-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let removed = event(
+            EventKind::Remove(RemoveKind::File),
+            &[dir.join("old.css").to_str().unwrap()],
+        );
+
+        assert!(
+            !unchanged_since(&dir, &removed, SystemTime::now()),
+            "a file that is gone was taken for one there all along"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_keeps_an_old_write_time_is_still_a_change() {
+        // A build copying files as they were can still be going when the check
+        // announces the rebuild.
+        let dir = std::env::temp_dir().join(format!("servio-copied-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("index.html");
+        let up_to_date = SystemTime::now() - Duration::from_secs(30);
+
+        std::fs::write(&page, "<html>copied</html>").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&page)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+
+        assert!(
+            !unchanged_since(&dir, &written(&[page.to_str().unwrap()]), up_to_date),
+            "a file copied with an old write time was taken for one written before"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_made_since_is_a_change_whatever_it_leads_to() {
+        // A build can point a link at a file it wrote well before the check
+        // announced the rebuild. This one leads to a file written long ago,
+        // so the two times cannot be the same.
+        let dir = std::env::temp_dir().join(format!("servio-linked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let up_to_date = SystemTime::now() - Duration::from_secs(60);
+
+        let link = dir.join("latest.js");
+        std::os::unix::fs::symlink("/bin/sh", &link).unwrap();
+        let made = event(
+            EventKind::Create(CreateKind::File),
+            &[link.to_str().unwrap()],
+        );
+
+        assert!(
+            !unchanged_since(&dir, &made, up_to_date),
+            "a link made since was judged by what it leads to"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_a_rebuild_wrote_before_it_was_announced_is_not_a_change() {
+        // macOS can hand the rebuild's own files over well after the check
+        // announced it and refreshed the browser for them.
+        let dir = std::env::temp_dir().join(format!("servio-announced-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (changed, changes) = mpsc::channel();
+        let (failed, _failures) = mpsc::channel();
+        let rebuilds = Rebuilds::new(false);
+        let mut report = report_changes(
+            dir.clone(),
+            false,
+            nothing_chosen(),
+            rebuilds.clone(),
+            changed,
+            failed,
+        );
+
+        let page = dir.join("index.html");
+        std::fs::write(&page, "<html>rebuilt</html>").unwrap();
+        let written_at = last_changed(&dir, &page).unwrap();
+        let handed_over = || {
+            Ok(vec![event(
+                EventKind::Create(CreateKind::File),
+                &[page.to_str().unwrap()],
+            )])
+        };
+        let announce_at = |clock| {
+            *rebuilds.announced.lock().unwrap() = Some(Moment {
+                at: Instant::now(),
+                clock,
+            });
+        };
+
+        // Announced as the file was written, and a moment before, so nothing
+        // has to wait.
+        announce_at(written_at);
+        report(handed_over());
+        assert!(
+            changes.try_recv().is_err(),
+            "a file the rebuild wrote before it was announced was taken for a change"
+        );
+
+        announce_at(written_at - Duration::from_millis(1));
+        report(handed_over());
+        assert!(
+            changes.try_recv().is_ok(),
+            "a file written after the rebuild was announced was not taken for a change"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

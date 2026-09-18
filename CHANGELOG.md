@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- A rebuild that replaced the served directory refreshed the browser twice on
+  macOS and Linux: once when the new directory was noticed, and again when the
+  system's own report of the same rebuild arrived a moment later. On a busy
+  Mac that report could come late enough to be announced as a change of its
+  own, after "Directory replaced". A report naming only files unchanged since
+  the rebuild was announced is now left out, as one naming files unchanged
+  since the run began already was
+- On macOS and Linux, a file copied in the first moments of a run with the
+  write time it had before, or a link made then to a file written before, did
+  not refresh the browser
+
 ## [0.7.0] - 2026-09-15
 
 ### Added
